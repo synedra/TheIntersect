@@ -2,20 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Movie App</title>
+    <title>Movie App - Astra DB</title>
 
     <style>
       body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
       .app { display: grid; grid-template-columns: 320px 1fr; min-height: 100vh; }
-      .sidebar { padding: 16px; border-right: 1px solid #ddd; }
+      .sidebar { padding: 16px; border-right: 1px solid #ddd; background: #f9fafb; }
       .main { padding: 16px; }
       .label { display:block; margin-top: 12px; font-size: 13px; color:#333; }
       .button { width:100%; margin-top: 12px; padding: 10px; border-radius: 10px; border: 1px solid #222; background:#222; color:white; cursor:pointer; }
       .button.secondary { background:white; color:#222; }
       .status { margin-top: 12px; font-size: 12px; color:#666; line-height: 1.3; }
+      .badge { display: inline-block; padding: 2px 8px; background: #6366f1; color: white; font-size: 11px; border-radius: 4px; margin-left: 8px; }
 
       /* Unified search input with chips */
-      .searchBox { margin-top: 6px; border:1px solid #ccc; border-radius: 12px; padding: 8px; }
+      .searchBox { margin-top: 6px; border:1px solid #ccc; border-radius: 12px; padding: 8px; background: white; }
       .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
       .chip {
         display:inline-flex; gap:6px; align-items:center;
@@ -27,7 +28,7 @@
       .inputInline { border:none; outline:none; width: 100%; padding: 6px; box-sizing: border-box; font-size: 14px; }
 
       /* Autocomplete suggestions */
-      .results { margin-top: 6px; border:1px solid #ddd; border-radius: 10px; overflow:hidden; }
+      .results { margin-top: 6px; border:1px solid #ddd; border-radius: 10px; overflow:hidden; background: white; }
       .resultItem {
         padding: 8px 10px; cursor:pointer; border-bottom:1px solid #eee;
         display:flex; justify-content:space-between; gap:10px; align-items:center;
@@ -38,10 +39,10 @@
 
       /* Grid */
       .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-top: 12px; }
-      .card { border: 1px solid #ddd; border-radius: 10px; padding: 8px; cursor: pointer; }
-      .card:hover { background:#fafafa; }
+      .card { border: 1px solid #ddd; border-radius: 10px; padding: 8px; cursor: pointer; transition: transform 0.2s; }
+      .card:hover { background:#fafafa; transform: translateY(-2px); }
       img { width: 100%; border-radius: 8px; display:block; }
-      .movieTitle { font-size: 14px; margin-top: 8px; }
+      .movieTitle { font-size: 14px; margin-top: 8px; font-weight: 500; }
       .meta { font-size: 12px; color:#666; margin-top: 4px; }
       .noposter { height: 240px; display:grid; place-items:center; background:#f3f3f3; border-radius: 8px; color:#666; }
 
@@ -77,6 +78,13 @@
       .sectionTitle { margin-top: 14px; font-size: 13px; color:#444; font-weight: 600; }
       .overview { margin-top: 8px; line-height: 1.35; color:#222; }
       .subtle { color:#666; font-size: 12px; margin-top: 6px; }
+      .modalSimilarBtn {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 8px 14px; border: 1px solid #6366f1; background: #6366f1;
+        color: white; border-radius: 8px; cursor: pointer;
+        font-size: 13px; margin-top: 14px;
+      }
+      .modalSimilarBtn:hover { background: #4f46e5; }
       @media (max-width: 800px) {
         .app { grid-template-columns: 1fr; }
         .sidebar { border-right: none; border-bottom: 1px solid #ddd; }
@@ -84,28 +92,28 @@
         .poster { width: 100%; max-width: 300px; }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-Bu3wC1_w.js"></script>
+    <script type="module" crossorigin src="/assets/index-BZgfrptj.js"></script>
   </head>
 
   <body>
     <div class="app">
       <aside class="sidebar">
-        <h1>Movies</h1>
+        <h1>Movies <span class="badge">Astra DB</span></h1>
 
-        <label class="label">Search</label>
+        <label class="label">Vector Search</label>
         <div class="searchBox">
           <div id="chips" class="chips"></div>
           <input
             id="searchInput"
             class="inputInline"
-            placeholder="Type: Tom Hanks, Meg Ryan, Romantic Comedy…"
+            placeholder="Search actors, genres, keywords…"
             autocomplete="off"
           />
         </div>
 
         <div id="suggestions" class="results" style="display:none;"></div>
 
-        <button id="clear" class="button secondary">Clear</button>
+        <button id="clear" class="button secondary">Clear Filters</button>
         <div id="status" class="status"></div>
       </aside>
 
@@ -131,4 +139,3 @@
 
   </body>
 </html>
-

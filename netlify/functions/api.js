@@ -1,3 +1,5 @@
+import fetch from 'node-fetch';
+
 export async function handler(event) {
   const qs = event.queryStringParameters || {}
   const path = qs.path
