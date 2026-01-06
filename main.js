@@ -966,9 +966,18 @@ function filterAutocomplete(query) {
     combinedData = combinedData.concat(autocompleteDataTV);
   }
   
-  // Filter entries where searchName starts with query (prefix match)
+  // Filter entries where searchName includes query (anywhere match)
   const results = combinedData
-    .filter(entry => entry.searchName.startsWith(qLower))
+    .filter(entry => entry.searchName.includes(qLower))
+    .sort((a, b) => {
+        // Prioritize "starts with" matches
+        const aStarts = a.searchName.startsWith(qLower);
+        const bStarts = b.searchName.startsWith(qLower);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        // Then by length (shorter match is likely more relevant)
+        return a.searchName.length - b.searchName.length;
+    })
     .slice(0, 15);  // Limit results
   
   console.log(`[Autocomplete] Filtered to ${results.length} matches in ${(performance.now() - startTime).toFixed(1)}ms`);

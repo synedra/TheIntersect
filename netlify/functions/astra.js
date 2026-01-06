@@ -10,6 +10,8 @@ const EMBEDDING_MODEL = "text-embedding-3-small";
 
 // In-memory cache for autocomplete data
 let cachedAutocompleteData = null;
+// In-memory cache for discover results
+let discoverCache = {};
 
 function getAutocompleteData() {
   if (cachedAutocompleteData) return cachedAutocompleteData;
@@ -106,20 +108,33 @@ export async function handler(event) {
       case "search": {
         let query = qs.query ? decodeURIComponent(qs.query) : "";
         
-        const filterConditions = [];
-        
         // Helper for splitting list params
         const getList = (param) => param ? decodeURIComponent(param).split(',').map(s => s.trim()).filter(Boolean) : [];
+
+        // PRIORITY #1: Exact Movie/Show ID Match (from Autocomplete)
+        // User request: "If a movie is selected, it should be the only result... search is essentially just 'Stranger than Fiction'."
+        const movieIds = getList(qs.movie_id);
+        if (movieIds.length > 0) {
+             const results = [];
+             for(const c of collections) {
+                 try {
+                     const docs = await db.collection(c.name).find({ _id: { $in: movieIds } }).toArray();
+                     docs.forEach(d => { d.content_type = c.type; results.push(d); });
+                 } catch(e){}
+             }
+             // If we found them, return immediately, ignoring other filters/vectors
+             if (results.length > 0) {
+                 return { statusCode: 200, body: JSON.stringify({ results: results.map(r => ({...r, id: r._id})) }) }; 
+             }
+        }
+        
+        const filterConditions = [];
 
         // AND Logic for Search Box Filters
         getList(qs.person).forEach(p => filterConditions.push({ cast: p }));
         getList(qs.genre).forEach(g => filterConditions.push({ genres: g }));
         getList(qs.keywords).forEach(k => filterConditions.push({ keywords: k }));
         
-        // OR Logic for IDs
-        const movieIds = getList(qs.movie_id);
-        if (movieIds.length > 0) filterConditions.push({ _id: { $in: movieIds } });
-
         // OR Logic for Language
         const languages = getList(qs.language);
         if (languages.length > 0) filterConditions.push({ original_language: { $in: languages } });
@@ -162,21 +177,33 @@ export async function handler(event) {
         let searchResults;
 
         if (query && query.length >= 2) {
-             const queryEmbedding = await generateEmbedding(query);
-             const vectorResults = await queryCollections(db, collections, finalFilter, { sort: { $vector: queryEmbedding }, limit, includeSimilarity: true }, limit);
              
-             // Exact title match attempt
-             let titleResults = [];
+             // PRIORITY #2: Exact Title Match (Text Search)
+             // User request: "Don't do a similar search if you have an exact match."
+             let exactMatches = [];
              for(const c of collections) {
                  try {
                      const coll = db.collection(c.name);
                      const field = c.type === 'movie' ? 'title_lower' : 'name_lower';
+                     // Note: We use the existing filters here (e.g. providers) because the user might just be searching by text + provider
                      const exacts = await coll.find({ ...finalFilter, [field]: query.toLowerCase() }, { limit: 5 }).toArray();
-                     exacts.forEach(e => { e.content_type = c.type; titleResults.push(e); });
+                     exacts.forEach(e => { e.content_type = c.type; exactMatches.push(e); });
                  } catch(e){}
              }
              
-             const merged = [...titleResults.map(r => ({...r, sortScore: 2})), ...vectorResults.map(r => ({...r, sortScore: r.$similarity || 0}))];
+             // If we have exact title matches, return ONLY them
+             if (exactMatches.length > 0) {
+                 return { statusCode: 200, body: JSON.stringify({ results: exactMatches.map(r => ({...r, id: r._id})) }) };
+             }
+
+             const queryEmbedding = await generateEmbedding(query);
+             const vectorResults = await queryCollections(db, collections, finalFilter, { sort: { $vector: queryEmbedding }, limit, includeSimilarity: true }, limit);
+             
+             // Exact title match attempt (Legacy / Fallback logic if distinct from above)
+             // We can keep this merged logic just in case the "exactMatches" block above missed something due to filter edge cases,
+             // but effectively exactMatches should have caught it.
+             
+             const merged = [...vectorResults.map(r => ({...r, sortScore: r.$similarity || 0}))];
              const unique = [];
              const seen = new Set();
              merged.sort((a,b) => b.sortScore - a.sortScore);
@@ -214,6 +241,16 @@ export async function handler(event) {
 
       case "discover": {
         const limit = parseInt(qs.limit) || 20;
+
+        // Check cache
+        const cacheKey = `discover:${contentTypes.sort().join(',')}:${limit}`;
+        const now = Date.now();
+        const TTL = 3600 * 1000; // 1 hour
+        if (discoverCache[cacheKey] && (now - discoverCache[cacheKey].timestamp < TTL)) {
+            console.log(`[Cache] Serving discover results from cache for key: ${cacheKey}`);
+            return { statusCode: 200, body: JSON.stringify(discoverCache[cacheKey].data) };
+        }
+
         const minPopularity = collections.length > 1 ? 100 : 75;
         const allResults = [];
         for (const collInfo of collections) {
@@ -224,7 +261,17 @@ export async function handler(event) {
           } catch (e) {}
         }
         allResults.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
-        return { statusCode: 200, body: JSON.stringify({ results: allResults.slice(0, limit).map(r => ({...r, id: r._id})) }) };
+        
+        const responseData = { results: allResults.slice(0, limit).map(r => ({...r, id: r._id})) };
+        
+        // Update cache
+        discoverCache[cacheKey] = {
+            timestamp: now,
+            data: responseData
+        };
+        console.log(`[Cache] Updated discover cache for key: ${cacheKey}`);
+        
+        return { statusCode: 200, body: JSON.stringify(responseData) };
       }
 
       case "get": {
@@ -296,7 +343,21 @@ export async function handler(event) {
           if(query.length < 2) return { statusCode: 200, body: JSON.stringify({ results: [] }) };
           
           const data = getAutocompleteData();
-          const matches = data.filter(d => d.name && d.name.toLowerCase().startsWith(query)).slice(0, 50);
+          let matches = data.filter(d => d.name && d.name.toLowerCase().includes(query));
+
+          // Sort smart: startsWith > short names > others
+          matches.sort((a, b) => {
+             const aName = a.name.toLowerCase();
+             const bName = b.name.toLowerCase();
+             const aStarts = aName.startsWith(query);
+             const bStarts = bName.startsWith(query);
+
+             if (aStarts && !bStarts) return -1;
+             if (!aStarts && bStarts) return 1;
+             return aName.length - bName.length;
+          });
+
+          matches = matches.slice(0, 50);
           
           const results = [];
           const seen = new Set();
