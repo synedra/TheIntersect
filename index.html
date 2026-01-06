@@ -1,146 +1,813 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Movie App - Astra DB</title>
 
-    <style>
-      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-      .app { display: grid; grid-template-columns: 320px 1fr; min-height: 100vh; }
-      .sidebar { padding: 16px; border-right: 1px solid #ddd; background: #f9fafb; }
-      .main { padding: 16px; }
-      .label { display:block; margin-top: 12px; font-size: 13px; color:#333; }
-      .button { width:100%; margin-top: 12px; padding: 10px; border-radius: 10px; border: 1px solid #222; background:#222; color:white; cursor:pointer; }
-      .button.secondary { background:white; color:#222; }
-      .status { margin-top: 12px; font-size: 12px; color:#666; line-height: 1.3; }
-      .badge { display: inline-block; padding: 2px 8px; background: #6366f1; color: white; font-size: 11px; border-radius: 4px; margin-left: 8px; }
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Movie App - Astra DB</title>
 
-      /* Unified search input with chips */
-      .searchBox { margin-top: 6px; border:1px solid #ccc; border-radius: 12px; padding: 8px; background: white; }
-      .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
-      .chip {
-        display:inline-flex; gap:6px; align-items:center;
-        padding: 4px 8px; border:1px solid #ddd; border-radius: 999px;
-        font-size: 12px; background:#f7f7f7;
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      padding: 16px;
+      border-right: 1px solid #ddd;
+      background: #f9fafb;
+      height: 100vh;
+      overflow-y: auto;
+      position: sticky;
+      top: 0;
+      box-sizing: border-box;
+    }
+
+    .main {
+      padding: 16px;
+    }
+
+    .label {
+      display: block;
+      margin-top: 12px;
+      font-size: 13px;
+      color: #333;
+      font-weight: 600;
+    }
+
+    .button {
+      width: 100%;
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid #222;
+      background: #222;
+      color: white;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .button.secondary {
+      background: white;
+      color: #222;
+      border: 1px solid #ddd;
+    }
+
+    .status {
+      margin-top: 12px;
+      font-size: 12px;
+      color: #666;
+      line-height: 1.3;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      background: #6366f1;
+      color: white;
+      font-size: 11px;
+      border-radius: 4px;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+
+    /* Language Button */
+    #language-button {
+      transition: all 0.2s;
+      border: 1px solid #e5e7eb;
+      background: white;
+      color: #374151;
+    }
+
+    #language-button:hover {
+      border-color: #9ca3af;
+      background: #f9fafb;
+    }
+
+    /* Mobile Header */
+    .mobile-header {
+      display: none;
+      padding: 12px 16px;
+      background: #fff;
+      border-bottom: 1px solid #eee;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .mobile-filter-btn {
+      padding: 8px 16px;
+      background: #222;
+      color: white;
+      border-radius: 20px;
+      border: none;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .mobile-close-sidebar {
+      display: none;
+      width: 100%;
+      margin-bottom: 16px;
+      background: #f3f4f6;
+      color: #333;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .toast {
+      position: fixed; top: 20px; left: 50%;
+      transform: translateX(-50%);
+      background: #222; color: white; padding: 12px 24px;
+      border-radius: 50px; box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+      display: flex; align-items: center; gap: 12px;
+      z-index: 2147483647; animation: slideDown 0.3s ease-out;
+      cursor: pointer; font-size: 14px; font-weight: 500;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .toast:hover { background: #333; transform: translateX(-50%) translateY(2px); }
+    @keyframes slideDown {
+      from { transform: translate(-50%, -20px); opacity: 0; }
+      to { transform: translate(-50%, 0); opacity: 1; }
+    }
+
+    /* Unified search input with chips */
+    .searchBox {
+      margin-top: 6px;
+      border: 1px solid #ccc;
+      border-radius: 12px;
+      padding: 8px;
+      background: white;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .chip {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      padding: 4px 10px;
+      border: 1px solid #e5e7eb;
+      border-radius: 999px;
+      font-size: 12px;
+      background: #f9fafb;
+      color: #374151;
+    }
+
+    .chip button {
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+      color: #9ca3af;
+      padding: 0 2px;
+    }
+
+    .chipType {
+      font-size: 10px;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .inputInline {
+      border: none;
+      outline: none;
+      width: 100%;
+      padding: 4px;
+      box-sizing: border-box;
+      font-size: 15px;
+    }
+
+    /* Autocomplete suggestions */
+    .results {
+      margin-top: 6px;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      overflow: hidden;
+      background: white;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    .resultItem {
+      padding: 10px 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #f3f4f6;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .resultItem:last-child {
+      border-bottom: none;
+    }
+
+    .resultItem:hover,
+    .resultItem.selected {
+      background: #f9fafb;
+    }
+
+    .suggestionType {
+      font-size: 11px;
+      color: #9ca3af;
+      white-space: nowrap;
+    }
+
+    /* Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .card {
+      border: none;
+      border-radius: 12px;
+      padding: 0;
+      cursor: pointer;
+      transition: transform 0.2s;
+      background: transparent;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+    }
+
+    img {
+      width: 100%;
+      border-radius: 12px;
+      display: block;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      aspect-ratio: 2/3;
+      object-fit: cover;
+    }
+
+    .movieTitle {
+      font-size: 14px;
+      margin-top: 10px;
+      font-weight: 600;
+      line-height: 1.3;
+      color: #111;
+    }
+
+    .meta {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .noposter {
+      height: 0;
+      padding-bottom: 150%;
+      display: grid;
+      place-items: center;
+      background: #f3f4f6;
+      border-radius: 12px;
+      color: #9ca3af;
+      font-size: 13px;
+    }
+
+    /* Modal */
+    .modalOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 3000;
+    }
+
+    .modalOverlay.open {
+      display: flex;
+    }
+
+    .modal {
+      background: #fff;
+      border-radius: 20px;
+      max-width: 900px;
+      width: 100%;
+      max-height: 90vh;
+      overflow: auto;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    }
+
+    .modalHeader {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 20px 24px 0 24px;
+      position: sticky;
+      top: 0;
+      background: white;
+      z-index: 10;
+    }
+
+    .modalClose {
+      border: none;
+      background: transparent;
+      padding: 8px;
+      cursor: pointer;
+      color: #666;
+      transition: all 0.2s;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .modalClose:hover {
+      color: #111;
+      background: transparent;
+    }
+
+    .modalBody {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 24px;
+    }
+
+    .poster {
+      width: 100%;
+    }
+
+    .poster img {
+      border-radius: 12px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    .pillRow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid #e5e7eb;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      background: #fff;
+      color: #374151;
+      transition: all 0.2s;
+    }
+
+    .pill:hover {
+      background: #f9fafb;
+      border-color: #d1d5db;
+    }
+
+    .providerGrid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .providerItem {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 12px;
+      border: 1px solid #eee;
+      transition: all 0.2s;
+      height: 64px;
+      box-sizing: border-box;
+      background: #fff;
+    }
+
+    .providerItem:hover {
+      background: #f9fafb;
+      border-color: #d1d5db;
+    }
+
+    .providerItem.selected-provider {
+      border-color: #fbbf24;
+      background: #fffbeb;
+    }
+
+    .providerItem img {
+      width: auto;
+      height: 100%;
+      border-radius: 6px;
+      box-shadow: none;
+      aspect-ratio: auto;
+      object-fit: contain;
+    }
+
+    .cast-link:hover {
+      text-decoration: underline;
+    }
+
+    .sectionTitle {
+      margin-top: 20px;
+      font-size: 14px;
+      color: #111;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .overview {
+      margin-top: 8px;
+      line-height: 1.6;
+      color: #374151;
+      font-size: 15px;
+    }
+
+    .subtle {
+      color: #6b7280;
+      font-size: 13px;
+      margin-top: 6px;
+    }
+
+    @media (max-width: 800px) {
+      .app {
+        display: block;
       }
-      .chip button { border:none; background:transparent; cursor:pointer; font-size: 14px; line-height: 1; }
-      .chipType { font-size: 11px; color:#777; }
-      .inputInline { border:none; outline:none; width: 100%; padding: 6px; box-sizing: border-box; font-size: 14px; }
 
-      /* Autocomplete suggestions */
-      .results { margin-top: 6px; border:1px solid #ddd; border-radius: 10px; overflow:hidden; background: white; }
-      .resultItem {
-        padding: 8px 10px; cursor:pointer; border-bottom:1px solid #eee;
-        display:flex; justify-content:space-between; gap:10px; align-items:center;
+      .mobile-header {
+        display: flex;
       }
-      .resultItem:last-child { border-bottom:none; }
-      .resultItem:hover, .resultItem.selected { background:#f6f6f6; }
-      .suggestionType { font-size: 11px; color:#777; white-space: nowrap; }
 
-      /* Grid */
-      .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-top: 12px; }
-      .card { border: 1px solid #ddd; border-radius: 10px; padding: 8px; cursor: pointer; transition: transform 0.2s; }
-      .card:hover { background:#fafafa; transform: translateY(-2px); }
-      img { width: 100%; border-radius: 8px; display:block; }
-      .movieTitle { font-size: 14px; margin-top: 8px; font-weight: 500; }
-      .meta { font-size: 12px; color:#666; margin-top: 4px; }
-      .noposter { height: 240px; display:grid; place-items:center; background:#f3f3f3; border-radius: 8px; color:#666; }
+      .sidebar {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 2000;
+        background: #fff;
+        width: 100%;
+        height: 100%;
+        padding: 20px;
+      }
 
-      /* Modal */
+      .sidebar.open {
+        display: block;
+        animation: slideIn 0.2s ease-out;
+      }
+
+      .mobile-close-sidebar {
+        display: block;
+      }
+
+      .main {
+        padding: 16px;
+      }
+
       .modalOverlay {
-        position: fixed; inset: 0; background: rgba(0,0,0,0.55);
-        display: none; align-items: center; justify-content: center;
-        padding: 24px; z-index: 1000;
+        padding: 0;
+        align-items: flex-end;
       }
-      .modalOverlay.open { display: flex; }
+
       .modal {
-        background: #fff; border-radius: 16px; max-width: 900px; width: 100%;
-        max-height: 90vh; overflow: auto; border: 1px solid #ddd;
+        max-height: 95vh;
+        height: 95vh;
+        border-radius: 20px 20px 0 0;
+        border-bottom: none;
+        width: 100%;
+        max-width: 100%;
       }
-      .modalHeader {
-        display:flex; justify-content: space-between; align-items:flex-start;
-        padding: 16px 16px 0 16px;
-      }
-      .modalClose {
-        border:1px solid #ddd; background:#fff; border-radius: 10px; padding: 8px 10px;
-        cursor:pointer;
-      }
-      .modalBody { padding: 16px; display:grid; grid-template-columns: 220px 1fr; gap: 16px; }
-      .poster { width: 220px; }
-      .poster img { border-radius: 12px; }
-      .pillRow { display:flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-      .pill {
-        display:inline-flex; align-items:center; gap:6px;
-        border:1px solid #ddd; border-radius:999px; padding: 6px 10px;
-        font-size: 12px; cursor: pointer; background: #f8f8f8;
-      }
-      .pill:hover { background:#f0f0f0; }
-      .provider-nav-pill { font-size: 11px; padding: 4px 8px; }
-      .cast-link:hover { text-decoration: underline; }
-      .sectionTitle { margin-top: 14px; font-size: 13px; color:#444; font-weight: 600; }
-      .overview { margin-top: 8px; line-height: 1.35; color:#222; }
-      .subtle { color:#666; font-size: 12px; margin-top: 6px; }
-      .modalSimilarBtn {
-        display: inline-flex; align-items: center; gap: 6px;
-        padding: 8px 14px; border: 1px solid #6366f1; background: #6366f1;
-        color: white; border-radius: 8px; cursor: pointer;
-        font-size: 13px; margin-top: 14px;
-      }
-      .modalSimilarBtn:hover { background: #4f46e5; }
-      @media (max-width: 800px) {
-        .app { grid-template-columns: 1fr; }
-        .sidebar { border-right: none; border-bottom: 1px solid #ddd; }
-        .modalBody { grid-template-columns: 1fr; }
-        .poster { width: 100%; max-width: 300px; }
-      }
-    </style>
-  </head>
 
-  <body>
-    <div class="app">
-      <aside class="sidebar">
-        <h1>Movies <span class="badge">Astra DB</span></h1>
+      .modalBody {
+        grid-template-columns: 1fr;
+        padding: 20px;
+        gap: 20px;
+      }
 
-        <label class="label">Vector Search</label>
-        <div class="searchBox">
-          <div id="chips" class="chips"></div>
-          <input
-            id="searchInput"
-            class="inputInline"
-            placeholder="Search actors, genres, keywords…"
-            autocomplete="off"
-          />
+      .poster {
+        max-width: 180px;
+        margin: 0 auto;
+      }
+
+      .grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }
+
+      .providerGrid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+
+    @keyframes slideIn {
+      from {
+        transform: translateY(100%);
+        opacity: 0;
+      }
+
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="mobile-header">
+    <h1 style="margin:0; font-size: 18px;">Movies <span class="badge">Astra DB</span></h1>
+    <button id="mobile-filter-btn" class="mobile-filter-btn">Search & Filters</button>
+  </div>
+
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <button id="mobile-close-sidebar" class="mobile-close-sidebar">Close Filters</button>
+
+      <h1 style="margin-top:0;" class="desktop-only">Movies <span class="badge">Astra DB</span></h1>
+
+      <div id="auth-container" style="margin-bottom: 16px;">
+        <button id="btn-login" class="button" style="display: none;">Log In</button>
+        <button id="btn-logout" class="button secondary" style="display: none;">Log Out</button>
+        <div id="user-profile" style="margin-top: 8px; font-size: 13px; color: #333; display: none;"></div>
+      </div>
+
+      <label class="label" style="margin-bottom: 8px;">Content Type:</label>
+      <div style="display:flex; gap:8px; margin-bottom:16px;">
+        <button id="btn-movies" class="button"
+          style="margin-top:0; padding:8px; font-size:12px; background:#222; border:1px solid #222;">Movies</button>
+        <button id="btn-tvshows" class="button secondary"
+          style="margin-top:0; padding:8px; font-size:12px;">TV Shows</button>
+      </div>
+
+      <label class="label">Movie Search</label>
+      <div class="searchBox">
+        <div id="chips" class="chips"></div>
+        <input id="searchInput" class="inputInline" placeholder="Search movies, actors, genres, keywords…"
+          autocomplete="off" />
+      </div>
+
+      <div id="suggestions" class="results" style="display:none;"></div>
+
+      <label class="label" style="margin-bottom: 8px;">Select your streaming providers:</label>
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <button id="btn-stream" class="button"
+          style="margin-top:0; padding:8px; font-size:12px; background:#222; border:1px solid #222;">Stream</button>
+        <button id="btn-rent-buy" class="button secondary"
+          style="margin-top:0; padding:8px; font-size:12px;">Rent/Buy</button>
+      </div>
+      <div id="providers" class="providerGrid"></div>
+
+      <button id="language-button" class="button secondary" style="text-align: left; display: flex; justify-content: space-between; align-items: center; margin-top: 16px;">
+        <span id="language-button-text">Select languages...</span>
+        <span style="font-size: 18px;">▾</span>
+      </button>
+
+      <button id="clear" class="button secondary">Clear Filters</button>
+      <div id="status" class="status"></div>
+    </aside>
+
+    <main class="main">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h2 class="title" style="margin: 0; font-size: 20px;">Results</h2>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: #666;">
+          <span>Data provided by</span>
+          <a href="https://tmdb.org" target="_blank" rel="noopener noreferrer">
+            <img src="/themoviedb.jpg" alt="The Movie Database"
+              style="width: 80px; height: auto; display: block; aspect-ratio: auto; object-fit: contain; border-radius: 0; box-shadow: none;">
+          </a>
         </div>
+      </div>
+      <div id="output">Loading…</div>
+    </main>
+  </div>
 
-        <div id="suggestions" class="results" style="display:none;"></div>
-
-        <label class="label">Where to Watch</label>
-        <div id="providers" class="pillRow"></div>
-
-        <button id="clear" class="button secondary">Clear Filters</button>
-        <div id="status" class="status"></div>
-      </aside>
-
-      <main class="main">
-        <h2 class="title">Results</h2>
-        <div id="output">Loading…</div>
-      </main>
-    </div>
-
-    <!-- Modal -->
-    <div id="modalOverlay" class="modalOverlay" aria-hidden="true">
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-        <div class="modalHeader">
-          <div>
-            <h2 id="modalTitle" style="margin:0;">Movie</h2>
-            <div id="modalSubtitle" class="subtle"></div>
-          </div>
-          <button id="modalClose" class="modalClose" type="button">Close</button>
+  <!-- Language Selection Modal -->
+  <div id="languageModalOverlay" class="modalOverlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="languageModalTitle" style="max-width: 600px;">
+      <div class="modalHeader">
+        <div>
+          <h2 id="languageModalTitle" style="margin:0;">Select Languages</h2>
+          <div class="subtle" style="font-size: 13px; margin-top: 4px;">Choose one or more languages</div>
         </div>
-        <div id="modalBody" class="modalBody"></div>
+        <button id="languageModalClose" class="modalClose" type="button">Close</button>
+      </div>
+      <div style="padding: 24px;">
+        <div id="language-checkboxes" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; max-height: 400px; overflow-y: auto;">
+          <!-- Language checkboxes will be populated by JS -->
+        </div>
+        <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid #e5e7eb; display: flex; gap: 8px; justify-content: flex-end;">
+          <button id="languageClearAll" class="button secondary" style="width: auto; margin: 0; padding: 8px 16px;">Clear All</button>
+          <button id="languageApply" class="button" style="width: auto; margin: 0; padding: 8px 24px;">Apply</button>
+        </div>
       </div>
     </div>
+  </div>
 
-    <script type="module" src="/main.js"></script>
-  </body>
+  <!-- Modal -->
+  <div id="modalOverlay" class="modalOverlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modalHeader">
+        <div>
+          <h2 id="modalTitle" style="margin:0;">Movie</h2>
+          <div id="modalSubtitle" class="subtle"></div>
+        </div>
+        <button id="modalClose" class="modalClose" type="button">Close</button>
+      </div>
+      <div id="modalBody" class="modalBody"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/main.js"></script>
+
+  <!-- Chatbot -->
+  <script type="module">
+    import Chatbot from "https://cdn.jsdelivr.net/npm/flowise-embed/dist/web.js"
+    try {
+      Chatbot.init({
+        chatflowid: "cbd9bc3a-d0db-4818-a7bd-23c86517ae9e",
+        apiHost: "https://cloud.flowiseai.com",
+        chatflowConfig: {
+          // topK: 2
+        },
+        observersConfig: {
+          // (optional) Allows you to execute code in parent based upon signal observations within the chatbot.
+          // The userinput field submitted to bot ("" when reset by bot)
+          observeUserInput: (userInput) => {
+            console.log({ userInput });
+          },
+          // The bot message stack has changed
+          observeMessages: (messages) => {
+            // console.log({ messages });
+            if (messages && messages.length > 0) {
+              const lastMessage = messages[messages.length - 1];
+              // Check if it's a bot message (Flowise usually uses 'apiMessage')
+              if (lastMessage.type === 'apiMessage' || lastMessage.role === 'assistant') {
+                const text = lastMessage.message || lastMessage.content || "";
+                const titles = new Set();
+
+                // 1. Look for text wrapped in double quotes
+                const quoteMatches = text.matchAll(/"([^"]+)"/g);
+                for (const match of quoteMatches) {
+                  if (match[1]) {
+                    let title = match[1].replace(/[,.!?;:]$/, '');
+                    if (title.length > 2 && !title.includes('\n')) { // Basic validation
+                       titles.add(title);
+                    }
+                  }
+                }
+
+                // 2. Look for numbered list items: "1. Title (Year)" or "1. **Title** (Year)"
+                // Regex: Start of line or space, number, dot, space, optional bold chars, capture title, optional bold chars, space, (Year)
+                const listMatches = text.matchAll(/(?:^|\n)\d+\.\s+(?:\*\*)?([^\n\r*]+?)(?:\*\*)?\s+\(\d{4}\)/g);
+                for (const match of listMatches) {
+                  if (match[1]) {
+                    let title = match[1].trim();
+                    titles.add(title);
+                  }
+                }
+
+                // 3. Look for "Letter - ItalicTitle" format: "A - *Avatar*" or "A - _Avatar_"
+                const italicMatches = text.matchAll(/(?:^|\n)\s*[\*\-•]?\s*[A-Z]\s+-\s+(?:\*|_)([^*_\n]+)(?:\*|_)/g);
+                for (const match of italicMatches) {
+                  if (match[1]) {
+                    let title = match[1].trim();
+                    titles.add(title);
+                  }
+                }
+
+                if (titles.size > 0) {
+                  const titleList = Array.from(titles);
+                  console.log("Found movie titles in chat:", titleList);
+                  if (window.showChatSuggestion) {
+                    window.showChatSuggestion(titleList);
+                  } else {
+                    console.warn("window.showChatSuggestion is not defined");
+                  }
+                }
+              }
+            }
+          },
+          // The bot loading signal changed
+          observeLoading: (loading) => {
+            console.log({ loading });
+          },
+        },
+        theme: {
+          button: {
+            backgroundColor: '#3B81F6',
+            right: 20,
+            bottom: 20,
+            size: 48, // small | medium | large | number
+            dragAndDrop: true,
+            iconColor: 'white',
+            customIconSrc: 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/svg/google-messages.svg',
+            autoWindowOpen: {
+              autoOpen: false, //parameter to control automatic window opening
+              openDelay: 2, // Optional parameter for delay time in seconds
+              autoOpenOnMobile: false, //parameter to control automatic window opening in mobile
+            },
+          },
+          tooltip: {
+            showTooltip: true,
+            tooltipMessage: 'Hi There 👋!',
+            tooltipBackgroundColor: 'black',
+            tooltipTextColor: 'white',
+            tooltipFontSize: 16,
+          },
+          form: {
+            backgroundColor: 'white',
+            textColor: 'black',
+          },
+          customCSS: ``, // Add custom CSS styles. Use !important to override default styles
+          chatWindow: {
+            showTitle: true,
+            showAgentMessages: true,
+            title: 'Flowise Bot',
+            titleAvatarSrc: 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/svg/google-messages.svg',
+            titleBackgroundColor: '#3B81F6',
+            titleTextColor: '#ffffff',
+            welcomeMessage: 'Welcome to the Movie Bot!  Ask me anything about movies, I love a challenge!',
+            errorMessage: 'Something went wrong. Please try again later.',
+            backgroundColor: '#ffffff',
+            backgroundImage: 'enter image path or link', // If set, this will overlap the background color of the chat window.
+            height: 700,
+            width: 400,
+            fontSize: 16,
+            starterPrompts: ['Give me 5 scary movies about clowns?', 'What movie had a character named Hans Gruber?'], // It overrides the starter prompts set by the chat flow passed
+            starterPromptFontSize: 15,
+            clearChatOnReload: false, // If set to true, the chat will be cleared when the page reloads
+            sourceDocsTitle: 'Sources:',
+            renderHTML: true,
+            botMessage: {
+              backgroundColor: '#f7f8ff',
+              textColor: '#303235',
+              showAvatar: true,
+              avatarSrc: 'https://raw.githubusercontent.com/zahidkhawaja/langchain-chat-nextjs/main/public/parroticon.png',
+            },
+            userMessage: {
+              backgroundColor: '#3B81F6',
+              textColor: '#ffffff',
+              showAvatar: true,
+              avatarSrc: 'https://raw.githubusercontent.com/zahidkhawaja/langchain-chat-nextjs/main/public/usericon.png',
+            },
+            textInput: {
+              placeholder: 'Ask anything about movies',
+              backgroundColor: '#ffffff',
+              textColor: '#303235',
+              sendButtonColor: '#3B81F6',
+              maxChars: 200,
+              maxCharsWarningMessage: 'You exceeded the characters limit. Please input less than 50 characters.',
+              autoFocus: true, // If not used, autofocus is disabled on mobile and enabled on desktop. true enables it on both, false disables it on both.
+              sendMessageSound: false,
+              // sendSoundLocation: "send_message.mp3", // If this is not used, the default sound effect will be played if sendSoundMessage is true.
+              receiveMessageSound: false,
+              // receiveSoundLocation: "receive_message.mp3", // If this is not used, the default sound effect will be played if receiveSoundMessage is true.
+            },
+            feedback: {
+              color: '#303235',
+            },
+            dateTimeToggle: {
+              date: true,
+              time: true,
+            },
+            footer: {
+              textColor: '#303235',
+              text: 'Powered by',
+              company: 'Flowise',
+              companyLink: 'https://flowiseai.com',
+            },
+          },
+        },
+      });
+      console.log("Chatbot initialized");
+    } catch (e) {
+      console.error("Chatbot initialization error:", e);
+    }
+  </script>
+</body>
+
 </html>

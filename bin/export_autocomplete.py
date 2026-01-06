@@ -6,6 +6,7 @@ This file can be loaded once on page start for instant in-memory filtering.
 
 import os
 import json
+import gzip
 from dotenv import load_dotenv
 from astrapy import DataAPIClient
 
@@ -66,10 +67,10 @@ def main():
         "entries": entries  # [[typeCode, name, searchName], ...]
     }
     
-    output_path = "public/autocomplete.json"
+    output_path = "public/autocomplete.json.gz"
     os.makedirs("public", exist_ok=True)
     
-    with open(output_path, "w") as f:
+    with gzip.open(output_path, "wt", encoding="utf-8") as f:
         json.dump(output, f, separators=(",", ":"))  # Compact JSON
     
     # Check file size

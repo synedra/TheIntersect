@@ -16,7 +16,7 @@ client = DataAPIClient(ASTRA_DB_APPLICATION_TOKEN)
 database = client.get_database(ASTRA_DB_API_ENDPOINT)
 
 # Get collection
-collection = database.get_collection("movies")
+collection = database.get_collection("movies2026")
 
 # Find the document with the highest tmdb_id
 result = collection.find_one({}, sort={"tmdb_id": -1}, projection={"tmdb_id": 1})

@@ -13,6 +13,7 @@
     "vite": "^5.4.21"
   },
   "dependencies": {
+    "@auth0/auth0-spa-js": "^2.11.0",
     "@datastax/astra-db-ts": "^2.1.2",
     "dotenv": "^17.2.3",
     "node-fetch": "^2.7.0"
