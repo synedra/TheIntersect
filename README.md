@@ -1,41 +1,117 @@
-# Movie Key App (Vite + React) — TMDB-powered intersecting search
+# Movie Key App (Astra DB Edition)
 
-This repo recreates the "search keys" + results + details workflow:
-- Ordered search keys ("chips") on the left
-- Results grid on the right
-- Details panel with blue links (genres/cast) that **add a key** and **re-run** search
-- Always-AND intersection via TMDB `/discover`
-- "Where to watch" via TMDB watch providers endpoint
+This application is a next-generation movie and TV show browser designed to provide **true intersecting search capabilities**. It allows users to layer multiple criteria—such as Genre, Cast Member, and Streaming Provider—to drill down to exact results (e.g., "Show me Sci-Fi movies starring Tom Hanks that are available on Netflix").   The movie information and interaction is driven by [TMDB](https://tmdb.org)
 
-## Prereqs
-- Node.js 18+ recommended
-- A TMDB API Read Access Token (v4). This app uses the v4 **Read Access Token**.
+Beyond traditional filters, this application utilizes **Vector Search** to understand the semantic meaning of your queries, enabling you to find titles based on themes, plot descriptions, or "vibe" rather than just keyword matching.
 
-## Setup
+## Core Features
 
-### 1) Server (proxy)
+*   **Intersecting Queries (The "Key" Concept)**: Stack filters dynamically. Every filter you add (e.g., "Action", "Keanu Reeves") behaves as an **AND** condition, narrowing your results instantly.
+*   **Vector Search & AI**: Uses OpenAI embeddings stored in **DataStax Astra DB** to power semantic search. You can search for "movies about time travel mechanics" and get relevant results even if those words aren't in the title.
+*   **Streaming Availability**: Integrated "Watch Provider" filtering to show only content available on your subscriptions (Netflix, Hulu, Prime, etc.).
+*   **Similar Titles**: A "More Like This" recommendation engine that uses vector similarity to find finding movies with matching plots and themes.
+*   **Unified Discovery**: Browse Movies and TV Shows in a single, unified grid.
+*   **Integrated AI Chatbot**: A genAI chatbot trained on the Intersect database.
+
+## Technology Stack
+
+This project is built with a modern, serverless architecture:
+
+*   **Frontend**: Vanilla JavaScript + [Vite](https://vitejs.dev/) (Fast, lightweight, no-framework overhead).
+*   **Backend**: [Netlify Functions](https://docs.netlify.com/functions/overview/) (Node.js) serves as the API layer, keeping credentials secure and handling logic.
+*   **Database**: [DataStax Astra DB](https://astra.datastax.com/) (Serverless Vector DB) stores movie metadata and vector embeddings.
+*   **AI/Embeddings**: [OpenAI API](https://openai.com/) (`text-embedding-3-small`) converts text into vector data for search.
+*   **Data Source**: Metadata provided by [The Movie Database (TMDB)](https://www.themoviedb.org/).
+*   **AI Chatbot**: Uses [Flowise](https://flowiseai.com) to answer questions based on the database.
+
+## Setup & Data Population
+
+This application requires a populated database to function. The repository includes a subset of data suitable for use to populate the movie backend with popular movies.
+
+### Prerequisites
+
+*   Node.js (v18+)
+*   Python 3 (for data loading scripts)
+*   [Astra DB](https://astra.datastax.com) Account (Free tier works)
+*   OpenAI API Key
+*   [TMDB](https://tmdb.org) API Key (v4 Read Token)
+*   [Netlify](https://netlify.com) Account
+
+### 1. Installation
+
 ```bash
-cd server
+git clone <repository-url>
+cd movie-key-app
+npm install
+```
+
+### 2. Environment Variables
+
+Create a `.env` file in the root directory:
+
+```bash
 cp .env.example .env
-# edit .env to add TMDB_READ_TOKEN
-npm install
-npm run dev
 ```
 
-Server runs at http://localhost:5174
+Fill in your credentials:
+*   `ASTRA_DB_API_ENDPOINT`: Your API endpoint from Astra DB.
+*   `ASTRA_DB_APPLICATION_TOKEN`: Your "AstraCS:..." token.
+*   `OPENAI_API_KEY`: For generating embeddings.
+*   `TMDB_READ_TOKEN`: For fetching fresh metadata.
 
-### 2) Client
+### 3. Database Population
+
+You have two options to populate the database:
+
+#### Option A: Quick Start (Recommended)
+We have provided a pre-processed dataset (`database_upload.json`) containing movies and TV shows with embeddings already generated.
+
+1.  Ensure your `.env` file is set up with Astra DB credentials.
+2.  Run the loader script:
+    ```bash
+    node bin/load_json_to_astra.js
+    ```
+
+### 3. Running Locally
+
+The application requires the Netlify framework to work - it serves the serverless functions for the front end to use.  You can run it locally with `netlify dev` or push it to the web with `netlify deploy --prod`
+
 ```bash
-cd ../client
-npm install
-npm run dev
+netlify dev
 ```
 
-Client runs at http://localhost:5173
+Open `http://localhost:8888` to browse the app.
 
-✅ The client uses Vite's dev proxy: requests to `/api/*` are forwarded to the server on `:5174`.
-So you don't need any client .env file for local dev.
+### 4. Creating the Chat Agent using Flowise
 
-## If you see "Could not connect to the server"
-That means the client is running but the proxy server is not. Make sure the server is started and is listening on :5174.
-# TheIntersect
+1. Visit [Flowise](https://flowiseai.com/) and click "Get Started" to create an account if you don't already have one.
+2. From the left hand navbar, click "Credentials", and follow the process to add credentials for OpenAI and Astra.
+2. From the left hand navigation bar, click "Agentflows"
+3. You'll start with a "Start" node - double click to make sure this has "Chat agent" selected
+4. Add an Agent by clicking on the plus icon and selecting "Agent" at the top of the list
+5. Configure the ChatOpenAI Model
+   * Select ChatOpenAI for the model
+   * Select your credential for the dropdown
+   * Your ChatOpenAI configuration should look like this:<br/>
+   <img src="public/ChatGPTSetup.jpg" width="400" alt="Chat GPT Setup" />
+6. Configure the Messages section to add a system message:
+   * Open "Messages"
+   * Select "System"
+   * Include this text: 
+   ```
+   You are a movie expert assistant with access to a database of 100,000 movies. When users ask about movies, actors, directors, or film information, use the astra_movie_search tool to find relevant information. Always search the database before answering questions about specific movies. Format your responses in a friendly, conversational way. If the search returns multiple movies, help the user understand the differences. Do not use any information outside of The Intersect to answer questions.
+   ```
+
+
+
+## Deployment
+
+This project is optimized for deployment on **Netlify**.
+
+1.  Connect your repository to Netlify with `netlify login` and `netlify link`
+2.  Add your Environment Variables in the Netlify Dashboard.
+3.  Deploy to your local system with `netlify dev`
+4.  Deploy to the web with `netlify deploy --prod`
+
+---
+*Built with ❤️ using DataStax Astra DB and OpenAI.*
