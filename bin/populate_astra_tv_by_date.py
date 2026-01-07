@@ -93,29 +93,30 @@ def get_tv_full_details(tv_id):
 def create_autocomplete_documents(tv_details):
     """
     Create flattened autocomplete documents from a TV show.
-    Returns a list of arrays [type_code, name, optional_id].
+    Returns a list of dicts {name, type, id (optional)}.
     """
     documents = []
-    name = tv_details.get('name')
-    tv_id = tv_details.get('id')
+    # TMDB TV objects use 'name' instead of 'title'
+    title = tv_details.get('name')
+    tv_id = str(tv_details.get('id'))
     
-    # 1. TV show name document (Type 0)
-    if name:
-        documents.append([0, name, tv_id])
+    # 1. TV Show name document
+    if title:
+        documents.append({"name": title, "id": tv_id, "type": "tv"})
 
-    # 2. Cast member documents (limit to top 5) (Type 1)
+    # 2. Cast member documents (limit to top 5)
     cast = tv_details.get('credits', {}).get('cast', [])
     for idx, actor in enumerate(cast[:5]):
         actor_name = actor.get('name')
         if actor_name:
-            documents.append([1, actor_name])
+            documents.append({"name": actor_name, "type": "person"})
 
-    # 3. Genre documents (Type 2)
+    # 3. Genre documents
     genres = tv_details.get('genres', [])
     for genre in genres:
         genre_name = genre['name'] if isinstance(genre, dict) else genre
         if genre_name:
-            documents.append([2, genre_name])
+            documents.append({"name": genre_name, "type": "genre"})
             
     return documents
 
@@ -319,7 +320,12 @@ def process_single_day(collection, date, stats, autocomplete_docs, seen_keys, js
                 try:
                     ac_docs = create_autocomplete_documents(tv_details)
                     for doc in ac_docs:
-                        key = (doc[0], doc[1])
+                        # Uniqueness check: ID for tv, Name for people/genres
+                        if doc.get('type') == 'tv':
+                            key = ('tv', doc.get('id'))
+                        else:
+                            key = (doc.get('type'), doc.get('name'))
+
                         if key in seen_keys:
                             continue
                         seen_keys.add(key)
@@ -327,7 +333,7 @@ def process_single_day(collection, date, stats, autocomplete_docs, seen_keys, js
                         new_since_last_write += 1
                         if new_since_last_write >= 100:
                             with open(json_path, "w") as f:
-                                json.dump(autocomplete_docs, f, ensure_ascii=False, separators=(",", ":"))
+                                json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
                             new_since_last_write = 0
                 except Exception as e:
                     print(f"⚠️  Error generating autocomplete doc for TV show {tv_id}: {e}")
@@ -402,13 +408,13 @@ def crawl_and_populate_by_day():
             # Write any remaining data
             if new_since_last_write > 0:
                 with open(json_path, "w") as f:
-                    json.dump(autocomplete_docs, f, ensure_ascii=False, separators=(",", ":"))
+                    json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
                     
         except KeyboardInterrupt:
             print("\n🛑 Stopping crawl...")
             # Final write before exiting
             with open(json_path, "w") as f:
-                json.dump(autocomplete_docs, f, ensure_ascii=False, separators=(",", ":"))
+                json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
             print(f"Saved {len(autocomplete_docs)} autocomplete entries before stopping")
             break
         
@@ -417,7 +423,7 @@ def crawl_and_populate_by_day():
     
     # Final write
     with open(json_path, "w") as f:
-        json.dump(autocomplete_docs, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
     print(f"Final export: {len(autocomplete_docs)} autocomplete entries to {json_path}")
     
     print(f"\n{'='*80}")

@@ -115,29 +115,29 @@ def get_last_processed_date(database):
 def create_autocomplete_documents(movie_details):
     """
     Create flattened autocomplete documents from a movie.
-    Returns a list of arrays [type_code, name, optional_id].
+    Returns a list of dicts {name, type, id (optional)}.
     """
     documents = []
     title = movie_details.get('title')
-    movie_id = movie_details.get('id')
+    movie_id = str(movie_details.get('id'))
     
-    # 1. Movie title document (Type 0)
+    # 1. Movie title document
     if title:
-        documents.append([0, title, movie_id])
+        documents.append({"name": title, "id": movie_id, "type": "movie"})
 
-    # 2. Cast member documents (limit to top 5) (Type 1)
+    # 2. Cast member documents (limit to top 5)
     cast = movie_details.get('credits', {}).get('cast', [])
     for idx, actor in enumerate(cast[:5]):
         actor_name = actor.get('name')
         if actor_name:
-            documents.append([1, actor_name])
+            documents.append({"name": actor_name, "type": "person"})
 
-    # 3. Genre documents (Type 2)
+    # 3. Genre documents
     genres = movie_details.get('genres', [])
     for genre in genres:
         genre_name = genre['name'] if isinstance(genre, dict) else genre
         if genre_name:
-            documents.append([2, genre_name])
+            documents.append({"name": genre_name, "type": "genre"})
             
     return documents
 
@@ -307,6 +307,13 @@ def process_single_day(collection, date, stats, autocomplete_docs, seen_keys, js
                     stats['errors'] += 1
                     continue
                 
+                # Skip movies shorter than 60 minutes
+                runtime = movie_details.get('runtime', 0)
+                if not runtime or runtime < 60:
+                    stats['skipped_short'] += 1
+                    pbar.set_postfix_str(f"⏭️  Short ({runtime}m)")
+                    continue
+
                 # Prepare document
                 try:
                     embedding_text = create_embedding_text(movie_details)
@@ -323,7 +330,12 @@ def process_single_day(collection, date, stats, autocomplete_docs, seen_keys, js
                 try:
                     ac_docs = create_autocomplete_documents(movie_details)
                     for doc in ac_docs:
-                        key = (doc[0], doc[1])
+                        # Uniqueness check: ID for movies, Name for people/genres
+                        if doc.get('type') == 'movie':
+                            key = ('movie', doc.get('id'))
+                        else:
+                            key = (doc.get('type'), doc.get('name'))
+
                         if key in seen_keys:
                             continue
                         seen_keys.add(key)
@@ -331,7 +343,7 @@ def process_single_day(collection, date, stats, autocomplete_docs, seen_keys, js
                         new_since_last_write += 1
                         if new_since_last_write >= 100:
                             with open(json_path, "w") as f:
-                                json.dump(autocomplete_docs, f, ensure_ascii=False, separators=(",", ":"))
+                                json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
                             new_since_last_write = 0
                 except Exception as e:
                     print(f"⚠️  Error generating autocomplete doc for movie {movie_id}: {e}")
@@ -370,7 +382,8 @@ def crawl_and_populate_by_day():
         'inserted': 0,
         'already_exists': 0,
         'not_found': 0,
-        'errors': 0
+        'errors': 0,
+        'skipped_short': 0
     }
     
     # Autocomplete export setup
@@ -406,13 +419,13 @@ def crawl_and_populate_by_day():
             # Write any remaining data
             if new_since_last_write > 0:
                 with open(json_path, "w") as f:
-                    json.dump(autocomplete_docs, f, ensure_ascii=False, separators=(",", ":"))
+                    json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
                     
         except KeyboardInterrupt:
             print("\n🛑 Stopping crawl...")
             # Final write before exiting
             with open(json_path, "w") as f:
-                json.dump(autocomplete_docs, f, ensure_ascii=False, separators=(",", ":"))
+                json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
             print(f"Saved {len(autocomplete_docs)} autocomplete entries before stopping")
             break
         
@@ -421,7 +434,7 @@ def crawl_and_populate_by_day():
     
     # Final write
     with open(json_path, "w") as f:
-        json.dump(autocomplete_docs, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
     print(f"Final export: {len(autocomplete_docs)} autocomplete entries to {json_path}")
     
     print(f"\n{'='*80}")
@@ -430,6 +443,7 @@ def crawl_and_populate_by_day():
     print(f"Total Processed: {stats['processed']:,}")
     print(f"Successfully Inserted: {stats['inserted']:,}")
     print(f"Already Existed: {stats['already_exists']:,}")
+    print(f"Skipped (<60m): {stats['skipped_short']:,}")
     print(f"Not Found (404): {stats['not_found']:,}")
     print(f"Errors: {stats['errors']:,}")
     print(f"{'='*80}\n")
