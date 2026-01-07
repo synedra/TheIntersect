@@ -71,11 +71,11 @@ We have provided a pre-processed dataset (`database_upload.json`) containing mov
 1.  Ensure your `.env` file is set up with Astra DB credentials.
 2.  Run the loader script:
     ```bash
-    node bin/load_json_to_astra.js
+    node bin/setup_data.js
     ```
-3.  Generate the autocomplete index:
+3.  Unzip the autocomplete index:
     ```bash
-    python3 bin/merge_autocomplete.py
+    gunzip public/autocomplete.json.gz
     ```
 
 ### 3. Running Locally
