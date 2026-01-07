@@ -4,6 +4,8 @@ This application is a next-generation movie and TV show browser designed to prov
 
 Beyond traditional filters, this application utilizes **Vector Search** to understand the semantic meaning of your queries, enabling you to find titles based on themes, plot descriptions, or "vibe" rather than just keyword matching.
 
+Working example at [The Intersect](https://theintersect.netlify.app)
+
 ## Core Features
 
 *   **Intersecting Queries (The "Key" Concept)**: Stack filters dynamically. Every filter you add (e.g., "Action", "Keanu Reeves") behaves as an **AND** condition, narrowing your results instantly.
@@ -71,6 +73,10 @@ We have provided a pre-processed dataset (`database_upload.json`) containing mov
     ```bash
     node bin/load_json_to_astra.js
     ```
+3.  Generate the autocomplete index:
+    ```bash
+    python3 bin/merge_autocomplete.py
+    ```
 
 ### 3. Running Locally
 
@@ -84,14 +90,34 @@ Open `http://localhost:8888` to browse the app.
 
 ### 4. Creating the Chat Agent using Flowise
 
-1. Visit [Flowise](https://flowiseai.com/) and click "Get Started" to create an account if you don't already have one.
-2. From the left hand navbar, click "Credentials", and follow the process to add credentials for OpenAI and Astra.
-2. From the left hand navigation bar, click "Agentflows"
-3. You'll start with a "Start" node - double click to make sure this has "Chat agent" selected
+Visit [Flowise](https://flowiseai.com/) and click "Get Started" to create an account if you don't already have one.
+
+First, set up your credentials.
+1. From the left hand navbar, click "Credentials"
+2. For Astra
+   * Get the credentials from the [Astra website](https://astra.datastax.com).  No credit card is needed for their free tier account.
+   * You can get connection credentials by clicking "Connect" on the page for your database.
+   * Enter the endpoint and token for your database in the Credentials dialog.
+3. For OpenAI
+   * Get the credentials from [OpenAI](https://openai.com)
+   * You will need your OpenAI API key
+
+
+Next, create the custom tool for the Astra search
+1. Select "Tools" on the left hand navbar
+2. Click "Create" to create a new tool
+3. Configure the tool to match this image
+   * Name: astra_movie_search
+   * Tool Description: Use this tool to search The Intersect movie database. It contains 100,000 records. Input should be a search string like a movie title or actor name. This is the only source for movie data..
+   * Input Schema: Add a string field named "query" with the following description: "The movie title or search terms to look up in the database."
+
+Bring it all together
+1. Click "Agentflows" to get started
+3. You'll see a "Start" node - double click to make sure this has "Chat agent" selected
 4. Add an Agent by clicking on the plus icon and selecting "Agent" at the top of the list
 5. Configure the ChatOpenAI Model
    * Select ChatOpenAI for the model
-   * Select your credential for the dropdown
+   * Select your OpenAI credential for the dropdown
    * Your ChatOpenAI configuration should look like this:<br/>
    <img src="public/ChatGPTSetup.jpg" width="400" alt="Chat GPT Setup" />
 6. Configure the Messages section to add a system message:
@@ -99,10 +125,32 @@ Open `http://localhost:8888` to browse the app.
    * Select "System"
    * Include this text: 
    ```
-   You are a movie expert assistant with access to a database of 100,000 movies. When users ask about movies, actors, directors, or film information, use the astra_movie_search tool to find relevant information. Always search the database before answering questions about specific movies. Format your responses in a friendly, conversational way. If the search returns multiple movies, help the user understand the differences. Do not use any information outside of The Intersect to answer questions.
+   You are a movie expert assistant with access to a database of hundreds of thousands movies. When users ask about movies, actors, directors, or film information, use the astra_movie_search tool to find relevant information. Always search the database before answering questions about specific movies. Format your responses in a friendly, conversational way. If the search returns multiple movies, help the user understand the differences. Do not use any information outside of The Intersect to answer questions.  If there is no information in the intersect database say you don't know.
    ```
+7.  Time to incorporate the tool you made.
+   * Click "Add Tool"
+   * Select your astra_movie_search tool
 
+8.  Save it and set it up!
+   * Click the save image in the upper right
+   * Click the ```</>``` embed button
+   * Select "Popup: React"
+   * Copy the embed text 
+   * Open your `index.html` file
+   * **Option 1 (Simple)**: Replace the whole Chatbot section with your copied code.
+   * **Option 2 (Interactive)**: If you want to have interaction with the page (recommended), just replace the `chatflowid` and `apiHost` values in the existing code, which will retain the logic to pop up a movie dialog if a movie is returned in the text.
 
+9. Run it locally
+
+```bash
+netlify dev
+```
+
+10. Run it in production
+ 
+```bash
+netlify deploy --prod
+```
 
 ## Deployment
 

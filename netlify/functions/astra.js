@@ -8,10 +8,16 @@ dotenv.config({ override: true });
 
 const EMBEDDING_MODEL = "text-embedding-3-small"; 
 
+// Instantiate client globally to reuse connection across invocations
+const client = new DataAPIClient(process.env.ASTRA_DB_APPLICATION_TOKEN);
+const db = client.db(process.env.ASTRA_DB_API_ENDPOINT);
+
 // In-memory cache for autocomplete data
 let cachedAutocompleteData = null;
 // In-memory cache for discover results
 let discoverCache = {};
+// In-memory cache for genre searches
+let genreCache = {};
 
 function getAutocompleteData() {
   if (cachedAutocompleteData) return cachedAutocompleteData;
@@ -62,37 +68,52 @@ async function generateEmbedding(text) {
 }
 
 async function queryCollections(db, collections, finalFilter, searchQuery, limit) {
-  const allResults = [];
-  for (const collInfo of collections) {
+  // Execute queries in parallel using Promise.all
+  const promises = collections.map(async (collInfo) => {
     try {
       const collection = db.collection(collInfo.name);
+
+      // Log the exact query being executed to debug timeouts
+      console.log(`[Astra Call] Collection: ${collInfo.name}`);
+      console.log(`Filter:`, JSON.stringify(finalFilter));
+      console.log(`Options:`, JSON.stringify(searchQuery || { limit }));
+
+      // Exclude vector data to reduce payload size and prevent timeouts
+      const options = { ...(searchQuery || { limit }), projection: { $vector: 0 } };
+
       let results;
       if (searchQuery) {
         if (Object.keys(finalFilter).length > 0) {
-          results = await collection.find(finalFilter, searchQuery).toArray();
+          console.log("Using filter with vector search");
+          results = await collection.find(finalFilter, options).toArray();
         } else {
-          results = await collection.find({}, searchQuery).toArray();
+          console.log("Using vector search without filter");
+          results = await collection.find({}, options).toArray();
         }
       } else {
-        results = await collection.find(finalFilter, { limit }).toArray();
+        results = await collection.find(finalFilter, options).toArray();
       }
-      results.forEach(r => {
+      
+      // Tag results
+      return results.map(r => {
         r.content_type = collInfo.type;
-        allResults.push(r);
+        return r;
       });
     } catch (e) {
       console.error(`Error querying ${collInfo.name}:`, e);
+      return [];
     }
-  }
-  return allResults;
+  });
+
+  const resultsArrays = await Promise.all(promises);
+  return resultsArrays.flat();
 }
 
 export async function handler(event) {
   const qs = event.queryStringParameters || {};
   const action = qs.action;
   
-  const client = new DataAPIClient(process.env.ASTRA_DB_APPLICATION_TOKEN);
-  const db = client.db(process.env.ASTRA_DB_API_ENDPOINT);
+  // Client and db are now global
   
   const contentTypesParam = qs.content_types || "movies";
   const contentTypes = contentTypesParam.split(',').map(t => t.trim());
@@ -111,9 +132,39 @@ export async function handler(event) {
         // Helper for splitting list params
         const getList = (param) => param ? decodeURIComponent(param).split(',').map(s => s.trim()).filter(Boolean) : [];
 
+        // Hoist variable declarations for cache checking
+        const movieIds = getList(qs.movie_id);
+        const personList = getList(qs.person);
+        const genreList = getList(qs.genre);
+        const keywordList = getList(qs.keywords);
+        const languages = getList(qs.language);
+        const providers = getList(qs.providers);
+        const paymentTypes = getList(qs.payment_types || "stream");
+        const limit = parseInt(qs.limit) || 20;
+
+        // Check for "bare genre search" cache hit
+        // Conditions: No text query, no specific movie/person/keyword/language/provider filters, but Genres ARE selected.
+        const isBareGenre = genreList.length > 0 && 
+                            (!query || query.length < 2) && 
+                            movieIds.length === 0 && 
+                            personList.length === 0 && 
+                            keywordList.length === 0 && 
+                            languages.length === 0 && 
+                            providers.length === 0;
+
+        let genreCacheKey = null;
+        if (isBareGenre) {
+            genreCacheKey = `genre:${genreList.sort().join('|')}:${contentTypes.sort().join('|')}:${paymentTypes.sort().join('|')}:${limit}`;
+            const now = Date.now();
+            if (genreCache[genreCacheKey] && (now - genreCache[genreCacheKey].timestamp < 3600000)) { // 1 hour TTL
+                console.log(`[Cache] Serving genre search from cache: ${genreCacheKey}`);
+                return { statusCode: 200, body: JSON.stringify({ results: genreCache[genreCacheKey].data }) };
+            }
+        }
+
         // PRIORITY #1: Exact Movie/Show ID Match (from Autocomplete)
         // User request: "If a movie is selected, it should be the only result... search is essentially just 'Stranger than Fiction'."
-        const movieIds = getList(qs.movie_id);
+        // (movieIds already parsed above)
         if (movieIds.length > 0) {
              const results = [];
              for(const c of collections) {
@@ -131,17 +182,23 @@ export async function handler(event) {
         const filterConditions = [];
 
         // AND Logic for Search Box Filters
-        getList(qs.person).forEach(p => filterConditions.push({ cast: p }));
-        getList(qs.genre).forEach(g => filterConditions.push({ genres: g }));
-        getList(qs.keywords).forEach(k => filterConditions.push({ keywords: k }));
+        // (Lists already parsed above)
+
+        personList.forEach(p => filterConditions.push({ cast: p }));
+        genreList.forEach(g => filterConditions.push({ genres: g }));
+        // Fixed: search inside the 'name' field of keywords
+        keywordList.forEach(k => filterConditions.push({ "keywords.name": k }));
+        
+        if (personList.length === 1 || genreList.length === 1 || keywordList.length === 1) {
+             filterConditions.push({ vote_average: { $gt: 7 } });
+        }
         
         // OR Logic for Language
-        const languages = getList(qs.language);
+        // (languages already parsed above)
         if (languages.length > 0) filterConditions.push({ original_language: { $in: languages } });
 
         // OR Logic for Providers
-        const providers = getList(qs.providers);
-        const paymentTypes = getList(qs.payment_types || "stream");
+        // (providers and paymentTypes already parsed above)
         
         if (providers.length > 0) {
              const providerClauses = providers.map(provider => {
@@ -165,13 +222,13 @@ export async function handler(event) {
             filterConditions.push({ $or: providerClauses });
         } else {
              const paymentClauses = [];
-             if (paymentTypes.includes('stream')) paymentClauses.push({ "watch_providers.US.stream.0": { $exists: true } });
-             if (paymentTypes.includes('rent')) paymentClauses.push({ "watch_providers.US.rent.0": { $exists: true } });
-             if (paymentTypes.includes('buy')) paymentClauses.push({ "watch_providers.US.buy.0": { $exists: true } });
+             if (paymentTypes.includes('stream')) paymentClauses.push({ "watch_providers.US.stream": { $exists: true } });
+             if (paymentTypes.includes('rent')) paymentClauses.push({ "watch_providers.US.rent": { $exists: true } });
+             if (paymentTypes.includes('buy')) paymentClauses.push({ "watch_providers.US.buy": { $exists: true } });
              if (paymentClauses.length > 0) filterConditions.push({ $or: paymentClauses });
         }
 
-        const limit = parseInt(qs.limit) || 20;
+        // limit parsed above
         const finalFilter = filterConditions.length > 0 ? { $and: filterConditions } : {};
         
         let searchResults;
@@ -186,7 +243,7 @@ export async function handler(event) {
                      const coll = db.collection(c.name);
                      const field = c.type === 'movie' ? 'title_lower' : 'name_lower';
                      // Note: We use the existing filters here (e.g. providers) because the user might just be searching by text + provider
-                     const exacts = await coll.find({ ...finalFilter, [field]: query.toLowerCase() }, { limit: 5 }).toArray();
+                     const exacts = await coll.find({ ...finalFilter, [field]: query.toLowerCase() }, { limit: 20, sort: { popularity: -1 } }).toArray();
                      exacts.forEach(e => { e.content_type = c.type; exactMatches.push(e); });
                  } catch(e){}
              }
@@ -198,11 +255,8 @@ export async function handler(event) {
 
              const queryEmbedding = await generateEmbedding(query);
              const vectorResults = await queryCollections(db, collections, finalFilter, { sort: { $vector: queryEmbedding }, limit, includeSimilarity: true }, limit);
-             
-             // Exact title match attempt (Legacy / Fallback logic if distinct from above)
-             // We can keep this merged logic just in case the "exactMatches" block above missed something due to filter edge cases,
-             // but effectively exactMatches should have caught it.
-             
+             console.log("Did a vector search with embedding for query:", query);
+
              const merged = [...vectorResults.map(r => ({...r, sortScore: r.$similarity || 0}))];
              const unique = [];
              const seen = new Set();
@@ -212,11 +266,34 @@ export async function handler(event) {
              }
              searchResults = unique.slice(0, limit);
         } else {
-             searchResults = await queryCollections(db, collections, finalFilter, null, limit);
+             // Logic for FILTERED searches (e.g. Genre="Action", Provider="Netflix")
+             
+             let effectiveFilter = finalFilter;
+             let searchOptions = { limit };
+
+             // Only apply optimizations if we actually have filters
+             if (Object.keys(finalFilter).length > 0) {
+                 // 1. Always sort filtered results by popularity
+                 searchOptions.sort = { popularity: -1 };
+             }
+             
+             searchResults = await queryCollections(db, collections, effectiveFilter, searchOptions, limit);
+             // Ensure final array is sorted too
              searchResults.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
         }
         
-        return { statusCode: 200, body: JSON.stringify({ results: searchResults.map(r => ({...r, id: r._id})) }) };
+        const resultsResponse = searchResults.map(r => ({...r, id: r._id}));
+
+        // Cache if this was a bare genre search
+        if (genreCacheKey) {
+             genreCache[genreCacheKey] = {
+                 timestamp: Date.now(),
+                 data: resultsResponse
+             };
+             console.log(`[Cache] Updated genre cache for key: ${genreCacheKey}`);
+        }
+
+        return { statusCode: 200, body: JSON.stringify({ results: resultsResponse }) };
       }
 
       case "details": {

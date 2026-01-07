@@ -85,12 +85,16 @@ def fix_duplicate(title):
             print(" -> Deleted.")
 
 if __name__ == "__main__":
-    # Add titles you are seeing duplicates for here
-    titles_to_check = [
-        "Zootopia 2", 
-        "Avatar: Fire and Ash",
-        "Mickey Mouse" # Add any others causing issues
-    ]
+    print("Duplicate Fixer Tool")
+    print("-------------------")
+    print("Enter a movie title to check for duplicates (or 'q' to quit).")
     
-    for t in titles_to_check:
-        fix_duplicate(t)
+    while True:
+        title_input = input("\nEnter title: ").strip()
+        if title_input.lower() in ['q', 'quit', 'exit']:
+            break
+            
+        if not title_input:
+            continue
+            
+        fix_duplicate(title_input)

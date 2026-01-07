@@ -1,8 +1,19 @@
-// COMMAND TO KILL PORT 5173:
-// lsof -ti:5173 | xargs kill -9
-
-// TMDB Authentication
 const TMDB_AUTH_API = "/.netlify/functions/tmdb_auth";
+
+// Inject spinner styles
+const spinnerStyle = document.createElement('style');
+spinnerStyle.innerHTML = `
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+.spinner {
+  border: 4px solid rgba(0, 0, 0, 0.1);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border-left-color: #09f;
+  animation: spin 1s ease infinite;
+}
+`;
+document.head.appendChild(spinnerStyle);
 
 const updateUI = async () => {
   const sessionId = localStorage.getItem("tmdb_session_id");
@@ -210,12 +221,6 @@ function addFilter(type, id, name) {
     selectedFilters.push({ type, id, name });
     renderChips();
     loadPage(1);
-    
-    // On mobile, we might want to keep the sidebar open to add more filters, 
-    // or close it to see results. Let's keep it open but maybe scroll to top?
-    // Actually, user might want to see results. Let's auto-close if it's a "search" action (text/movie)
-    // but keep open for "provider" or "genre" toggles? 
-    // For now, let's just keep it open so they can stack filters.
   }
 }
 window.addFilter = addFilter;
@@ -281,11 +286,7 @@ window.showChatSuggestion = function(titles) {
       if (chip) {
         const title = chip.getAttribute('data-title');
         console.log("Toast chip clicked, adding filter:", title);
-        // Let's just add it for now.
         addFilter("text", title, title);
-        // Don't remove toast immediately so they can click others? 
-        // Or remove it? Let's remove it to be clean.
-        // toast.remove(); 
       }
     };
   }
@@ -396,74 +397,7 @@ function renderGrid(movies) {
 }
 
 function renderPagination(page, total) {
-  const container = document.getElementById("pagination");
-  if (!container) return;
-
-  container.innerHTML = "";
-
-  if (total <= 1) return;
-
-  const maxVisible = 5;
-  let startPage = Math.max(1, page - Math.floor(maxVisible / 2));
-  let endPage = Math.min(total, startPage + maxVisible - 1);
-
-  if (endPage - startPage + 1 < maxVisible) {
-    startPage = Math.max(1, endPage - maxVisible + 1);
-  }
-
-  const prevBtn = document.createElement("button");
-  prevBtn.textContent = "Previous";
-  prevBtn.disabled = page === 1;
-  prevBtn.addEventListener("click", () => {
-    if (page > 1) loadPage(page - 1);
-  });
-  container.appendChild(prevBtn);
-
-  if (startPage > 1) {
-    const firstBtn = document.createElement("button");
-    firstBtn.textContent = "1";
-    firstBtn.addEventListener("click", () => loadPage(1));
-    container.appendChild(firstBtn);
-
-    if (startPage > 2) {
-      const ellipsis = document.createElement("span");
-      ellipsis.textContent = "...";
-      ellipsis.className = "ellipsis";
-      container.appendChild(ellipsis);
-    }
-  }
-
-  for (let i = startPage; i <= endPage; i++) {
-    const pageBtn = document.createElement("button");
-    pageBtn.textContent = i;
-    if (i === page) {
-      pageBtn.classList.add("active");
-    }
-    pageBtn.addEventListener("click", () => loadPage(i));
-    container.appendChild(pageBtn);
-  }
-
-  if (endPage < total) {
-    if (endPage < total - 1) {
-      const ellipsis = document.createElement("span");
-      ellipsis.textContent = "...";
-      ellipsis.className = "ellipsis";
-      container.appendChild(ellipsis);
-    }
-
-    const lastBtn = document.createElement("button");
-    lastBtn.textContent = total;
-    lastBtn.addEventListener("click", () => loadPage(total));
-    container.appendChild(lastBtn);
-  }
-
-  const nextBtn = document.createElement("button");
-  nextBtn.textContent = "Next";
-  nextBtn.disabled = page === total;
-  nextBtn.addEventListener("click", () => {
-    if (page < total) loadPage(page + 1);
-  });
-  container.appendChild(nextBtn);
+  // Pagination disabled
 }
 
 async function loadPage(page = 1) {
@@ -471,7 +405,7 @@ async function loadPage(page = 1) {
   currentPage = 1;
   const output = document.getElementById("output");
   if (output) {
-    output.innerHTML = "Loading…";
+    output.innerHTML = `<div style="display:flex; justify-content:center; padding:50px;"><div class="spinner"></div></div>`;
   }
 
   try {
@@ -520,14 +454,20 @@ async function loadPage(page = 1) {
     // Add content_types to all requests
     const contentTypesParam = contentTypesStr ? { content_types: contentTypesStr } : {};
     
+    // ADDED: Request sorting by popularity (descending)
+    // The backend handle this if the result set is small enough or indexed
+    const sortParams = { sort: "popularity", sort_order: "desc" };
+
     if (hasFilters) {
       // Has filters, call search
-      console.log('[LoadPage] Calling search with params:', { ...params, ...contentTypesParam });
-      data = await astraApi("search", { ...params, ...contentTypesParam });
+      const searchParams = { ...params, ...contentTypesParam, ...sortParams };
+      console.log('[LoadPage] Calling search with params:', searchParams);
+      data = await astraApi("search", searchParams);
     } else {
       // No filters, call discover
-      console.log('[LoadPage] Calling discover with params:', contentTypesParam);
-      data = await astraApi("discover", contentTypesParam);
+      const discoverParams = { ...contentTypesParam, ...sortParams };
+      console.log('[LoadPage] Calling discover with params:', discoverParams);
+      data = await astraApi("discover", discoverParams);
     }
 
     if (data && data.results) {
@@ -563,14 +503,13 @@ async function openMovieModal(movieId) {
       return;
     }
 
-    console.log("Details Data:", data);
-    
     const isTVShow = data.content_type === 'tv';
     const title = isTVShow ? data.name : data.title;
     const releaseDate = isTVShow ? data.first_air_date : data.release_date;
 
     modalTitle.textContent = title || (isTVShow ? "TV Show" : "Movie");
     
+    // Build subtitle
     const subtitleParts = [
       releaseDate ? new Date(releaseDate).getFullYear() : "",
       isTVShow && data.number_of_seasons ? `${data.number_of_seasons} Season${data.number_of_seasons > 1 ? 's' : ''}` : "",
@@ -585,7 +524,29 @@ async function openMovieModal(movieId) {
       ? `<img src="https://image.tmdb.org/t/p/w500${data.poster_path}" alt="${escapeHtml(title)}" />`
       : `<div class="noposter" style="height:320px;">No poster</div>`;
 
-    // Handle genres (array of objects or strings)
+    // TMDB Deep Link construction
+    const validId = data.id || movieId;
+    const tmdbUrl = `https://www.themoviedb.org/${isTVShow ? 'tv' : 'movie'}/${validId}`;
+    
+    const tmdbLinkHtml = `
+      <div style="margin-top: 24px; text-align: left;">
+        <a href="${tmdbUrl}" target="_blank" rel="noopener noreferrer" style="text-decoration: none; color: #666; font-size: 11px; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px;">
+          <span style="text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; color: #888;">View on</span>
+          <img src="/themoviedb.jpg" alt="TMDB" style="width: 50px; height: auto; border-radius: 0; box-shadow: none; aspect-ratio: auto; object-fit: contain;">
+        </a>
+      </div>
+    `;
+
+    // Calculate spoken languages for tooltip
+    let spokenLanguagesStr = "";
+    if (data.spoken_languages && Array.isArray(data.spoken_languages)) {
+      spokenLanguagesStr = data.spoken_languages
+        .map(l => l.english_name || l.name)
+        .filter(Boolean)
+        .join(", ");
+    }    
+
+    // Handle genres
     let genresHtml = "";
     if (Array.isArray(data.genres)) {
       genresHtml = data.genres.map(g => 
@@ -598,8 +559,6 @@ async function openMovieModal(movieId) {
     if (data.watch_providers && data.watch_providers.US) {
       const us = data.watch_providers.US;
       const providerMap = {};
-
-      // Helper to add to map
       const addToMap = (list, type) => {
         if (list && list.length > 0) {
           list.forEach(p => {
@@ -608,7 +567,6 @@ async function openMovieModal(movieId) {
           });
         }
       };
-
       addToMap(us.stream, 'Stream');
       addToMap(us.rent, 'Rent');
       addToMap(us.buy, 'Buy');
@@ -627,7 +585,6 @@ async function openMovieModal(movieId) {
                 const logo = getProviderLogo(name);
                 const url = getProviderUrl(name);
                 const typeList = Array.from(types).sort().join(', ');
-                
                 return `
                   <tr class="provider-row" data-provider="${escapeHtml(name)}" style="border-bottom: 1px solid #f9f9f9;">
                     <td style="padding:8px 4px;">
@@ -686,7 +643,10 @@ async function openMovieModal(movieId) {
     }
 
     modalBody.innerHTML = `
-      <div class="poster">${posterHtml}</div>
+      <div class="poster">
+        ${posterHtml}
+        ${tmdbLinkHtml}
+      </div>
       <div>
         <div class="overview">${escapeHtml(data.overview || "No overview available.")}</div>
 
@@ -700,7 +660,11 @@ async function openMovieModal(movieId) {
         
         ${data.original_language || data.production_countries ? `
         <div style="margin-top:8px; font-size:13px;">
-            ${data.original_language ? `<div><strong>Language:</strong> ${escapeHtml(getLanguageName(data.original_language))}</div>` : ''}
+            ${data.original_language ? `
+              <div ${spokenLanguagesStr ? `title="Available/Spoken Languages: ${escapeHtml(spokenLanguagesStr)}"` : ''} 
+                   style="${spokenLanguagesStr ? 'cursor: help; text-decoration-line: underline; text-decoration-style: dotted; text-decoration-color: #999;' : ''}">
+                <strong>Original Language:</strong> ${escapeHtml(getLanguageName(data.original_language))}
+              </div>` : ''}
             ${data.production_countries && data.production_countries.length > 0 ? `<div style="margin-top:4px;"><strong>Country:</strong> ${escapeHtml(data.production_countries.join(', '))}</div>` : ''}
         </div>
         ` : ''}
@@ -724,8 +688,6 @@ async function openMovieModal(movieId) {
         <div class="sectionTitle">Select which providers to include</div>
         <div>${providersHtml}</div>
         ` : ''}
-
-
       </div>
       
       <div id="similar-movies-container" style="grid-column: 1 / -1; margin-top: 24px; border-top: 1px solid #eee; padding-top: 16px;">
@@ -738,7 +700,7 @@ async function openMovieModal(movieId) {
 
     loadSimilarMovies(movieId, isTVShow);
 
-    // Add click handlers for cast names to filter by actor
+    // Reattach listeners
     modalBody.querySelectorAll(".cast-link").forEach(link => {
       link.addEventListener("click", () => {
         const actorName = link.getAttribute("data-name");
@@ -749,7 +711,6 @@ async function openMovieModal(movieId) {
       });
     });
 
-    // Add click handlers for genre pills
     modalBody.querySelectorAll(".genre-pill").forEach(pill => {
       pill.style.cursor = 'pointer';
       pill.addEventListener("click", () => {
@@ -761,7 +722,6 @@ async function openMovieModal(movieId) {
       });
     });
 
-    // Add click handlers for keyword pills
     modalBody.querySelectorAll(".keyword-pill").forEach(pill => {
       pill.style.cursor = 'pointer';
       pill.addEventListener("click", () => {
@@ -772,38 +732,21 @@ async function openMovieModal(movieId) {
         closeModal();
       });
     });
-
-    // Add click handlers for provider rows (clicking the name/row adds filter)
-    // Note: The link itself opens in new tab, but we can make the row clickable or add a button
-    // The user asked: "When someone clicks a provider name I would like it to highlight the appropriate logo in the left-hand panel."
-    // So let's attach it to the row, but avoid hijacking the link if they click exactly on the link?
-    // Actually, let's just make the text clickable if it's not the link, or add a specific action.
-    // But the user said "clicks a provider name".
     
     modalBody.querySelectorAll(".provider-row").forEach(row => {
       row.style.cursor = 'pointer';
       row.addEventListener("click", (e) => {
-        // If clicked on the anchor tag, let it open the link
         if (e.target.closest('a')) return;
-
         const providerName = row.dataset.provider;
-        
-        // Add to selected providers if not already there
         if (!selectedProviders.has(providerName)) {
             selectedProviders.add(providerName);
-            
-            // Update sidebar UI
             const sidebarItem = document.querySelector(`.providerItem[data-provider="${CSS.escape(providerName)}"]`);
             if (sidebarItem) {
                 sidebarItem.classList.add("selected-provider");
                 sidebarItem.style.border = "3px solid yellow";
                 sidebarItem.style.borderRadius = "8px";
             }
-            
             loadPage(1);
-            
-            // If on mobile, maybe open the sidebar to show the filter was added?
-            // Or just let them see the results update behind the modal.
         }
         closeModal();
       });
@@ -823,7 +766,7 @@ async function loadSimilarMovies(movieId, isTVShow = false) {
   try {
     const data = await astraApi("similar", { id: movieId, limit: 10 });
     if (!data || !data.results || data.results.length === 0) {
-      container.innerHTML = `<div class='subtle'>No similar ${isTVShow ? 'TV shows' : 'movies'} found.</div>`;
+      container.innerHTML = `<div class='subtle'>No similar titles found.</div>`;
       return;
     }
     
@@ -847,7 +790,7 @@ async function loadSimilarMovies(movieId, isTVShow = false) {
 
   } catch (e) {
     console.error(e);
-    container.innerHTML = `<div class='subtle'>Error loading similar ${isTVShow ? 'TV shows' : 'movies'}.</div>`;
+    container.innerHTML = `<div class='subtle'>Error loading similar titles.</div>`;
   }
 }
 
@@ -863,124 +806,80 @@ function closeModal() {
 }
 
 // In-memory autocomplete data (loaded once on page start)
-let autocompleteDataMovies = null;
-let autocompleteDataTV = null;
+let autocompleteData = null;
 const AUTOCOMPLETE_TYPES = ["movie", "person", "genre"];
 
 async function loadAutocompleteData() {
   try {
     const startTime = performance.now();
-    
-    // Load movies autocomplete
-    const responseMovies = await fetch("/autocomplete.json");
-    if (responseMovies.ok) {
-      const dataMovies = await responseMovies.json();
-      const entriesMovies = Array.isArray(dataMovies) ? dataMovies : (dataMovies.entries || dataMovies);
-      autocompleteDataMovies = entriesMovies.map(entry => {
+    // Load merged autocomplete (movies + tv + people + genres)
+    const response = await fetch("/autocomplete.json");
+    if (response.ok) {
+      const data = await response.json();
+      const entries = Array.isArray(data) ? data : (data.entries || data);
+      
+      autocompleteData = entries.map(entry => {
         if (Array.isArray(entry)) {
-          const [typeCode, name, movieId] = entry;
+          // Legacy support for compact arrays [type, name, id]
+          const [typeCode, name, id] = entry;
+          const mappedType = AUTOCOMPLETE_TYPES[typeCode] || "Movie"; 
+          
           return {
-            type: AUTOCOMPLETE_TYPES[typeCode] || "movie",
+            type: mappedType,
             name,
             searchName: name.toLowerCase(),
-            movieId,
-            contentType: 'movie'
+            id,
           };
         } else {
-          const { type, name, searchName, icon, movieId } = entry;
-          const obj = {
-            type: typeof type === 'number' ? (AUTOCOMPLETE_TYPES[type] || "movie") : (type || "movie"),
+          // Object format (preferred)
+          const { type, name, searchName, icon, id, movieId } = entry;
+          
+          let finalType = type;
+          if (typeof type === 'number') {
+             finalType = AUTOCOMPLETE_TYPES[type] || "Movie";
+          }
+          
+          return {
+            type: finalType || "Movie",
             name,
             searchName: searchName || name.toLowerCase(),
-            movieId,
-            contentType: 'movie'
+            id: id || movieId,
+            icon
           };
-          if (icon) obj.icon = icon;
-          return obj;
         }
       });
-      console.log(`[Autocomplete] Loaded ${autocompleteDataMovies.length} movie entries`);
+      console.log(`[Autocomplete] Loaded ${autocompleteData.length} entries`);
     } else {
-      autocompleteDataMovies = [];
+      autocompleteData = [];
     }
-    
-    // Load TV shows autocomplete
-    try {
-      const responseTV = await fetch("/autocomplete-tv-fresh.json");
-      if (responseTV.ok) {
-        const dataTV = await responseTV.json();
-        const entriesTV = Array.isArray(dataTV) ? dataTV : (dataTV.entries || dataTV);
-        autocompleteDataTV = entriesTV.map(entry => {
-          if (Array.isArray(entry)) {
-            const [typeCode, name, tvId] = entry;
-            return {
-              type: AUTOCOMPLETE_TYPES[typeCode] || "movie",
-              name,
-              searchName: name.toLowerCase(),
-              movieId: tvId,
-              contentType: 'tv'
-            };
-          } else {
-            const { type, name, searchName, icon, movieId } = entry;
-            const obj = {
-              type: typeof type === 'number' ? (AUTOCOMPLETE_TYPES[type] || "movie") : (type || "movie"),
-              name,
-              searchName: searchName || name.toLowerCase(),
-              movieId,
-              contentType: 'tv'
-            };
-            if (icon) obj.icon = icon;
-            return obj;
-          }
-        });
-        console.log(`[Autocomplete] Loaded ${autocompleteDataTV.length} TV show entries`);
-      } else {
-        autocompleteDataTV = [];
-      }
-    } catch (e) {
-      console.log(`[Autocomplete] TV autocomplete not available:`, e);
-      autocompleteDataTV = [];
-    }
-    
-    console.log(`[Autocomplete] Total load time: ${(performance.now() - startTime).toFixed(0)}ms`);
   } catch (error) {
     console.error("Failed to load autocomplete data:", error);
-    autocompleteDataMovies = [];
-    autocompleteDataTV = [];
+    autocompleteData = [];
   }
 }
 
 function filterAutocomplete(query) {
-  if ((!autocompleteDataMovies && !autocompleteDataTV) || query.length < 2) return [];
+  if (!autocompleteData || query.length < 2) return [];
   
   const startTime = performance.now();
   const qLower = query.toLowerCase();
-  console.log(`[Autocomplete] Filtering for query "${query}" (${qLower})`);
   
-  // Combine data from selected content types
-  let combinedData = [];
-  if (searchMode.movies && autocompleteDataMovies) {
-    combinedData = combinedData.concat(autocompleteDataMovies);
-  }
-  if (searchMode.tvshows && autocompleteDataTV) {
-    combinedData = combinedData.concat(autocompleteDataTV);
-  }
-  
-  // Filter entries where searchName includes query (anywhere match)
-  const results = combinedData
-    .filter(entry => entry.searchName.includes(qLower))
+  const results = autocompleteData
+    .filter(entry => {
+        if (entry.type === 'Movie' && !searchMode.movies) return false;
+        if (entry.type === 'TV Show' && !searchMode.tvshows) return false;
+        return entry.searchName.includes(qLower);
+    })
     .sort((a, b) => {
         // Prioritize "starts with" matches
         const aStarts = a.searchName.startsWith(qLower);
         const bStarts = b.searchName.startsWith(qLower);
         if (aStarts && !bStarts) return -1;
         if (!aStarts && bStarts) return 1;
-        // Then by length (shorter match is likely more relevant)
         return a.searchName.length - b.searchName.length;
     })
-    .slice(0, 15);  // Limit results
+    .slice(0, 15);
   
-  console.log(`[Autocomplete] Filtered to ${results.length} matches in ${(performance.now() - startTime).toFixed(1)}ms`);
   return results;
 }
 
@@ -1023,7 +922,6 @@ async function setupAutocomplete() {
           searchInput.value = "";
           autocompleteList.innerHTML = "";
           autocompleteList.style.display = "none";
-          // If the search bar is in a modal (unlikely but safe to call)
           if (typeof closeModal === 'function') closeModal(); 
         }
       }
@@ -1071,60 +969,50 @@ async function setupAutocomplete() {
           thumbHtml = `<img src="${escapeHtml(result.icon)}" alt="icon" class="autocomplete-thumb" style="width:32px;height:32px;object-fit:cover;border-radius:4px;margin-right:8px;vertical-align:middle;">`;
         }
 
-        if (result.type === "person") {
-          item.innerHTML = `
-            <div style="display:flex;align-items:center;">
-              ${thumbHtml}
-              <div style="flex: 1;">
-                <div style="font-size: 14px;">${!thumbHtml ? '👤 ' : ''}${escapeHtml(result.name)}</div>
-                <div class="suggestionType">Person</div>
-              </div>
-            </div>
-          `;
-          item.addEventListener("click", () => {
-            addFilter("person", result.name, result.name);
-            searchInput.value = "";
-            autocompleteList.innerHTML = "";
-            autocompleteList.style.display = "none";
-            closeModal();
-          });
-        } else if (result.type === "genre") {
-          item.innerHTML = `
-            <div style="display:flex;align-items:center;">
-              ${thumbHtml}
-              <div style="flex: 1;">
-                <div style="font-size: 14px;">${!thumbHtml ? '🏷️ ' : ''}${escapeHtml(result.name)}</div>
-                <div class="suggestionType">Genre</div>
-              </div>
-            </div>
-          `;
-          item.addEventListener("click", () => {
-            addFilter("genre", result.name, result.name);
-            searchInput.value = "";
-            autocompleteList.innerHTML = "";
-            autocompleteList.style.display = "none";
-            closeModal();
-          });
-        } else {
-          // Movie
-          item.innerHTML = `
-            <div style="display:flex;align-items:center;">
-              ${thumbHtml}
-              <div style="flex: 1;">
-                <div style="font-size: 14px;">${!thumbHtml ? '🎬 ' : ''}${escapeHtml(result.title || result.name)}</div>
-                <div class="suggestionType">Movie</div>
-              </div>
-            </div>
-          `;
-          item.addEventListener("click", () => {
-            // For movies, add as specific movie filter
-            addFilter("movie", result.movieId, result.title || result.name);
-            searchInput.value = "";
-            autocompleteList.innerHTML = "";
-            autocompleteList.style.display = "none";
-            closeModal();
-          });
+        // Determine icon based on type string (case insensitive check)
+        const typeStr = String(result.type).toLowerCase();
+        let displayType = result.type;
+        let iconChar = '🎬'; 
+
+        if (typeStr.includes("person")) {
+            iconChar = '👤';
+            displayType = "Person";
+        } else if (typeStr.includes("genre")) {
+            iconChar = '🏷️';
+            displayType = "Genre";
+        } else if (typeStr.includes("tv")) {
+            iconChar = '📺';
         }
+
+        item.innerHTML = `
+            <div style="display:flex;align-items:center;">
+              ${thumbHtml}
+              <div style="flex: 1;">
+                <div style="font-size: 14px;">${!thumbHtml ? iconChar + ' ' : ''}${escapeHtml(result.name)}</div>
+                <div class="suggestionType">${escapeHtml(displayType)}</div>
+              </div>
+            </div>
+        `;
+
+        item.addEventListener("click", () => {
+             // Handle click based on type
+             if (typeStr.includes("person")) {
+                 addFilter("person", result.name, result.name);
+             } else if (typeStr.includes("genre")) {
+                 addFilter("genre", result.name, result.name);
+             } else if (typeStr.includes("movie")) {
+                 addFilter("movie", result.id || result.name, result.name);
+             } else if (typeStr.includes("tv")) {
+                 addFilter("text", result.name, result.name); 
+             } else {
+                 addFilter("text", result.name, result.name);
+             }
+             
+             searchInput.value = "";
+             autocompleteList.innerHTML = "";
+             autocompleteList.style.display = "none";
+             if (typeof closeModal === 'function') closeModal();
+        });
 
         autocompleteList.appendChild(item);
       });
@@ -1192,65 +1080,21 @@ function setupLanguageModal() {
   
   // All available languages in a common order
   const allLanguages = [
-    { code: 'en', name: 'English' },
-    { code: 'es', name: 'Spanish' },
-    { code: 'fr', name: 'French' },
-    { code: 'de', name: 'German' },
-    { code: 'it', name: 'Italian' },
-    { code: 'pt', name: 'Portuguese' },
-    { code: 'ja', name: 'Japanese' },
-    { code: 'ko', name: 'Korean' },
-    { code: 'zh', name: 'Chinese' },
-    { code: 'hi', name: 'Hindi' },
-    { code: 'ru', name: 'Russian' },
-    { code: 'ar', name: 'Arabic' },
-    { code: 'th', name: 'Thai' },
-    { code: 'nl', name: 'Dutch' },
-    { code: 'sv', name: 'Swedish' },
-    { code: 'tr', name: 'Turkish' },
-    { code: 'pl', name: 'Polish' },
-    { code: 'da', name: 'Danish' },
-    { code: 'fi', name: 'Finnish' },
-    { code: 'no', name: 'Norwegian' },
-    { code: 'nb', name: 'Norwegian Bokmål' },
-    { code: 'af', name: 'Afrikaans' },
-    { code: 'am', name: 'Amharic' },
-    { code: 'bg', name: 'Bulgarian' },
-    { code: 'bn', name: 'Bengali' },
-    { code: 'ca', name: 'Catalan' },
-    { code: 'cn', name: 'Cantonese' },
-    { code: 'cs', name: 'Czech' },
-    { code: 'cy', name: 'Welsh' },
-    { code: 'dv', name: 'Divehi' },
-    { code: 'el', name: 'Greek' },
-    { code: 'et', name: 'Estonian' },
-    { code: 'eu', name: 'Basque' },
-    { code: 'fa', name: 'Persian' },
-    { code: 'gl', name: 'Galician' },
-    { code: 'gu', name: 'Gujarati' },
-    { code: 'he', name: 'Hebrew' },
-    { code: 'hr', name: 'Croatian' },
-    { code: 'hu', name: 'Hungarian' },
-    { code: 'hy', name: 'Armenian' },
-    { code: 'id', name: 'Indonesian' },
-    { code: 'is', name: 'Icelandic' },
-    { code: 'ka', name: 'Georgian' },
-    { code: 'kk', name: 'Kazakh' },
-    { code: 'ku', name: 'Kurdish' },
-    { code: 'lt', name: 'Lithuanian' },
-    { code: 'lv', name: 'Latvian' },
-    { code: 'ml', name: 'Malayalam' },
-    { code: 'ms', name: 'Malay' },
-    { code: 'pa', name: 'Punjabi' },
-    { code: 'ro', name: 'Romanian' },
-    { code: 'sr', name: 'Serbian' },
-    { code: 'ta', name: 'Tamil' },
-    { code: 'te', name: 'Telugu' },
-    { code: 'tl', name: 'Tagalog' },
-    { code: 'uk', name: 'Ukrainian' },
-    { code: 'ur', name: 'Urdu' },
-    { code: 'uz', name: 'Uzbek' },
-    { code: 'xx', name: 'Unknown' }
+    { code: 'en', name: 'English' }, { code: 'es', name: 'Spanish' }, { code: 'fr', name: 'French' }, { code: 'de', name: 'German' },
+    { code: 'it', name: 'Italian' }, { code: 'pt', name: 'Portuguese' }, { code: 'ja', name: 'Japanese' }, { code: 'ko', name: 'Korean' },
+    { code: 'zh', name: 'Chinese' }, { code: 'hi', name: 'Hindi' }, { code: 'ru', name: 'Russian' }, { code: 'ar', name: 'Arabic' },
+    { code: 'th', name: 'Thai' }, { code: 'nl', name: 'Dutch' }, { code: 'sv', name: 'Swedish' }, { code: 'tr', name: 'Turkish' },
+    { code: 'pl', name: 'Polish' }, { code: 'da', name: 'Danish' }, { code: 'fi', name: 'Finnish' }, { code: 'no', name: 'Norwegian' },
+    { code: 'nb', name: 'Norwegian Bokmål' }, { code: 'af', name: 'Afrikaans' }, { code: 'am', name: 'Amharic' }, { code: 'bg', name: 'Bulgarian' },
+    { code: 'bn', name: 'Bengali' }, { code: 'ca', name: 'Catalan' }, { code: 'cn', name: 'Cantonese' }, { code: 'cs', name: 'Czech' },
+    { code: 'cy', name: 'Welsh' }, { code: 'dv', name: 'Divehi' }, { code: 'el', name: 'Greek' }, { code: 'et', name: 'Estonian' },
+    { code: 'eu', name: 'Basque' }, { code: 'fa', name: 'Persian' }, { code: 'gl', name: 'Galician' }, { code: 'gu', name: 'Gujarati' },
+    { code: 'he', name: 'Hebrew' }, { code: 'hr', name: 'Croatian' }, { code: 'hu', name: 'Hungarian' }, { code: 'hy', name: 'Armenian' },
+    { code: 'id', name: 'Indonesian' }, { code: 'is', name: 'Icelandic' }, { code: 'ka', name: 'Georgian' }, { code: 'kk', name: 'Kazakh' },
+    { code: 'ku', name: 'Kurdish' }, { code: 'lt', name: 'Lithuanian' }, { code: 'lv', name: 'Latvian' }, { code: 'ml', name: 'Malayalam' },
+    { code: 'ms', name: 'Malay' }, { code: 'pa', name: 'Punjabi' }, { code: 'ro', name: 'Romanian' }, { code: 'sr', name: 'Serbian' },
+    { code: 'ta', name: 'Tamil' }, { code: 'te', name: 'Telugu' }, { code: 'tl', name: 'Tagalog' }, { code: 'uk', name: 'Ukrainian' },
+    { code: 'ur', name: 'Urdu' }, { code: 'uz', name: 'Uzbek' }, { code: 'xx', name: 'Unknown' }
   ];
   
   // Populate checkboxes
@@ -1358,11 +1202,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupProviders();
   setupLanguageModal();
 
-  // const searchForm = document.getElementById("search-form");
   const searchInput = document.getElementById("searchInput");
   const genreFilter = document.getElementById("genre-filter");
-  // const modalClose = document.querySelector(".modal-close");
-  // const modal = document.getElementById("movie-modal");
 
   if (searchInput) {
     searchInput.addEventListener("keydown", async (e) => {
@@ -1419,8 +1260,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (btnStream) {
     btnStream.addEventListener("click", () => {
       searchMode.stream = !searchMode.stream;
-      // Ensure at least one is selected? Or allow none (which means no provider results)?
-      // Let's allow toggling freely.
       updateToggleButtons();
       loadPage(1);
     });
@@ -1476,6 +1315,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         btnStream.style.border = "1px solid #222";
       }
     }
+
     if (btnRentBuy) {
       if (searchMode.rentBuy) {
         btnRentBuy.classList.remove("secondary");
@@ -1490,9 +1330,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
   }
-
-  // Language modal setup
-  setupLanguageModal();
 
   const clearButton = document.getElementById("clear");
   if (clearButton) {
@@ -1534,75 +1371,5 @@ document.getElementById("output").addEventListener("click", (e) => {
   if (!card) return;
   const movieId = card.getAttribute("data-movie-id");
   openMovieModal(movieId);
-});
-
-// Remove any direct file loading - use the API endpoint instead
-async function initAutocomplete(inputElement) {
-  let timeout;
-  
-  inputElement.addEventListener('input', async (e) => {
-    clearTimeout(timeout);
-    const query = e.target.value.trim();
-    
-    if (query.length < 2) {
-      hideAutocompleteSuggestions();
-      return;
-    }
-    
-    timeout = setTimeout(async () => {
-      try {
-        const response = await fetch(`/.netlify/functions/astra?action=autocomplete&query=${encodeURIComponent(query)}`);
-        
-        if (!response.ok) {
-          console.error(`Autocomplete failed: ${response.status}`);
-          return;
-        }
-        
-        const data = await response.json();
-        displayAutocompleteSuggestions(data.results || []);
-      } catch (error) {
-        console.error('Autocomplete error:', error);
-        hideAutocompleteSuggestions();
-      }
-    }, 300);
-  });
-}
-
-function displayAutocompleteSuggestions(results) {
-  // Your UI code to display suggestions
-  const container = document.getElementById('autocomplete-results');
-  if (!container) return;
-  
-  if (results.length === 0) {
-    container.innerHTML = '';
-    container.style.display = 'none';
-    return;
-  }
-  
-  container.innerHTML = results.map(item => {
-    const icon = item.icon || '';
-    const name = item.title || item.name;
-    return `<div class="autocomplete-item" data-type="${item.type}" data-id="${item.id}">
-      ${icon} ${name}
-    </div>`;
-  }).join('');
-  
-  container.style.display = 'block';
-}
-
-function hideAutocompleteSuggestions() {
-  const container = document.getElementById('autocomplete-results');
-  if (container) {
-    container.innerHTML = '';
-    container.style.display = 'none';
-  }
-}
-
-// Initialize on page load
-document.addEventListener('DOMContentLoaded', () => {
-  const searchInput = document.querySelector('#search-input');
-  if (searchInput) {
-    initAutocomplete(searchInput);
-  }
 });
 
