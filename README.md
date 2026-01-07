@@ -68,15 +68,29 @@ You have two options to populate the database:
 #### Option A: Quick Start (Recommended)
 We have provided a pre-processed dataset (`database_upload.json`) containing movies and TV shows with embeddings already generated.
 
-1.  Ensure your `.env` file is set up with Astra DB credentials.
-2.  Run the loader script:
+1.  Ensure your `.env` file is set up with Astra DB credentials and OpenAI credentials
+
+```
+# Astra DB Configuration
+ASTRA_DB_KEYSPACE=default_keyspace
+ASTRA_DB_APPLICATION_TOKEN=
+ASTRA_DB_API_ENDPOINT=
+OPENAI_API_KEY=
+```
+
+2.  Run the loader script (this takes a couple of minutes)
+
     ```bash
-    node bin/load_json_to_astra.js
+    node bin/setup_data.js
+
     ```
-3.  Generate the autocomplete index:
+
+3.  Unzip the autocomplete index:
+
     ```bash
-    python3 bin/merge_autocomplete.py
+    gunzip public/autocomplete.json.gz
     ```
+
 
 ### 3. Running Locally
 
