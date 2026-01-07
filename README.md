@@ -83,6 +83,8 @@ We have provided a pre-processed dataset (`database_upload.json`) containing mov
 The application requires the Netlify framework to work - it serves the serverless functions for the front end to use.  You can run it locally with `netlify dev` or push it to the web with `netlify deploy --prod`
 
 ```bash
+netlify login
+netlify sites:create (you need to pick a unique name for the site)
 netlify dev
 ```
 
