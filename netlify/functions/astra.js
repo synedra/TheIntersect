@@ -113,6 +113,9 @@ export async function handler(event) {
   const qs = event.queryStringParameters || {};
   const action = qs.action;
   
+  // Read settings from query parameters
+  const showSimilar = qs.show_similar === "true";
+  
   // Client and db are now global
   
   const contentTypesParam = qs.content_types || "movies";
@@ -141,6 +144,9 @@ export async function handler(event) {
         const providers = getList(qs.providers);
         const paymentTypes = getList(qs.payment_types || "stream");
         const limit = parseInt(qs.limit) || 20;
+
+        // NEW: Type filter (movie, person, genre)
+        const typeFilter = qs.type_filter; // Expected values: "movie", "person", "genre"
 
         // Check for "bare genre search" cache hit
         // Conditions: No text query, no specific movie/person/keyword/language/provider filters, but Genres ARE selected.
@@ -173,8 +179,54 @@ export async function handler(event) {
                      docs.forEach(d => { d.content_type = c.type; results.push(d); });
                  } catch(e){}
              }
-             // If we found them, return immediately, ignoring other filters/vectors
+             
+             // If we found them
              if (results.length > 0) {
+                 // Check if showSimilar setting is enabled
+                 if (showSimilar && results[0].$vector) {
+                     console.log("[Search] showSimilar enabled, finding similar movies to selected item");
+                     
+                     // Get the vector from the first matched movie
+                     let sourceVector = results[0].$vector;
+                     
+                     // Normalize vector format
+                     if (!Array.isArray(sourceVector)) {
+                         if (sourceVector._vector && Array.isArray(sourceVector._vector)) {
+                             sourceVector = sourceVector._vector;
+                         } else if (sourceVector.data && Array.isArray(sourceVector.data)) {
+                             sourceVector = sourceVector.data;
+                         }
+                     }
+                     
+                     if (Array.isArray(sourceVector)) {
+                         // Perform vector similarity search across collections
+                         let similarResults = [];
+                         for (const collInfo of collections) {
+                             try {
+                                 const collection = db.collection(collInfo.name);
+                                 const items = await collection.find(
+                                     {},
+                                     { sort: { $vector: sourceVector }, limit: limit, includeSimilarity: true, projection: { $vector: 0 } }
+                                 ).toArray();
+                                 
+                                 items.forEach(item => {
+                                     item.content_type = collInfo.type;
+                                     similarResults.push(item);
+                                 });
+                             } catch(e) {
+                                 console.error(`Error querying ${collInfo.name} for similar:`, e);
+                             }
+                         }
+                         
+                         // Sort by similarity and return top results
+                         similarResults.sort((a, b) => (b.$similarity || 0) - (a.$similarity || 0));
+                         return { statusCode: 200, body: JSON.stringify({ 
+                             results: similarResults.slice(0, limit).map(r => ({...r, id: r._id})) 
+                         }) };
+                     }
+                 }
+                 
+                 // Default behavior: return only the exact match
                  return { statusCode: 200, body: JSON.stringify({ results: results.map(r => ({...r, id: r._id})) }) }; 
              }
         }
@@ -188,6 +240,17 @@ export async function handler(event) {
         genreList.forEach(g => filterConditions.push({ genres: g }));
         // Fixed: search inside the 'name' field of keywords
         keywordList.forEach(k => filterConditions.push({ "keywords.name": k }));
+        
+        // Apply type filter
+        if (typeFilter === "person" && personList.length === 0) {
+            // If user selected "person" type but didn't specify a person, we can't filter meaningfully
+            // Option 1: Return empty results
+            // Option 2: Ignore the type filter
+            // Going with Option 2 for better UX
+        } else if (typeFilter === "genre" && genreList.length === 0) {
+            // Similar handling for genre
+        }
+        // Note: "movie" type filter is handled by collection selection (contentTypes)
         
         if (personList.length === 1 || genreList.length === 1 || keywordList.length === 1) {
              filterConditions.push({ vote_average: { $gt: 7 } });
@@ -248,8 +311,43 @@ export async function handler(event) {
                  } catch(e){}
              }
              
-             // If we have exact title matches, return ONLY them
+             // If we have exact title matches
              if (exactMatches.length > 0) {
+                 // Check if showSimilar is enabled
+                 if (showSimilar && exactMatches[0].$vector) {
+                     console.log("[Search] showSimilar enabled for exact title match, expanding to similar results");
+                     
+                     // Get vector from first exact match
+                     let sourceVector = exactMatches[0].$vector;
+                     
+                     // Normalize vector format
+                     if (!Array.isArray(sourceVector)) {
+                         if (sourceVector._vector && Array.isArray(sourceVector._vector)) {
+                             sourceVector = sourceVector._vector;
+                         } else if (sourceVector.data && Array.isArray(sourceVector.data)) {
+                             sourceVector = sourceVector.data;
+                         }
+                     }
+                     
+                     if (Array.isArray(sourceVector)) {
+                         // Continue to vector search instead of returning exact match only
+                         const queryEmbedding = sourceVector;
+                         const vectorResults = await queryCollections(db, collections, finalFilter, { sort: { $vector: queryEmbedding }, limit, includeSimilarity: true }, limit);
+                         
+                         const merged = [...vectorResults.map(r => ({...r, sortScore: r.$similarity || 0}))];
+                         const unique = [];
+                         const seen = new Set();
+                         merged.sort((a,b) => b.sortScore - a.sortScore);
+                         for(const r of merged) {
+                             if(!seen.has(r._id)) { seen.add(r._id); unique.push({...r, id: r._id}); }
+                         }
+                         searchResults = unique.slice(0, limit);
+                         
+                         return { statusCode: 200, body: JSON.stringify({ results: searchResults }) };
+                     }
+                 }
+                 
+                 // Default: return ONLY exact matches
                  return { statusCode: 200, body: JSON.stringify({ results: exactMatches.map(r => ({...r, id: r._id})) }) };
              }
 

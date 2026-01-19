@@ -68,10 +68,10 @@ def discover_movies_by_date(page=1, date_min=None, date_max=None):
     url = f"{TMDB_BASE_URL}/discover/movie"
     params = {
         "api_key": TMDB_API_KEY,
-        "language": "en-US",
         "sort_by": "popularity.desc",
         "include_adult": "false",
         "include_video": False,
+        "runtime.gte": 60,  # Minimum 60 minutes - ONLY FOR MOVIES
         "page": page,
         "primary_release_date.gte": date_min,
         "primary_release_date.lte": date_max

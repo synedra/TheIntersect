@@ -11,6 +11,8 @@
       margin: 0;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       -webkit-font-smoothing: antialiased;
+      background: #0f172a;
+      color: #e2e8f0;
     }
 
     .app {
@@ -21,8 +23,8 @@
 
     .sidebar {
       padding: 16px;
-      border-right: 1px solid #ddd;
-      background: #f9fafb;
+      border-right: 1px solid #334155;
+      background: #1e293b;
       height: 100vh;
       overflow-y: auto;
       position: sticky;
@@ -32,13 +34,14 @@
 
     .main {
       padding: 16px;
+      background: #0f172a;
     }
 
     .label {
       display: block;
       margin-top: 12px;
       font-size: 13px;
-      color: #333;
+      color: #cbd5e1;
       font-weight: 600;
     }
 
@@ -47,8 +50,8 @@
       margin-top: 12px;
       padding: 12px;
       border-radius: 10px;
-      border: 1px solid #222;
-      background: #222;
+      border: 1px solid #3b82f6;
+      background: #3b82f6;
       color: white;
       cursor: pointer;
       font-size: 14px;
@@ -56,22 +59,27 @@
     }
 
     .button.secondary {
-      background: white;
-      color: #222;
-      border: 1px solid #ddd;
+      background: #1e293b;
+      color: #cbd5e1;
+      border: 1px solid #475569;
+    }
+
+    .button.secondary:hover {
+      background: #334155;
+      border-color: #64748b;
     }
 
     .status {
       margin-top: 12px;
       font-size: 12px;
-      color: #666;
+      color: #94a3b8;
       line-height: 1.3;
     }
 
     .badge {
       display: inline-block;
       padding: 2px 8px;
-      background: #6366f1;
+      background: #3b82f6;
       color: white;
       font-size: 11px;
       border-radius: 4px;
@@ -90,33 +98,33 @@
     }
 
     .spinner {
-      border: 4px solid rgba(0, 0, 0, 0.1);
+      border: 4px solid rgba(255, 255, 255, 0.1);
       width: 40px;
       height: 40px;
       border-radius: 50%;
-      border-left-color: #09f;
+      border-left-color: #3b82f6;
       animation: spin 1s ease infinite;
     }
 
     /* Language Button */
     #language-button {
       transition: all 0.2s;
-      border: 1px solid #e5e7eb;
-      background: white;
-      color: #374151;
+      border: 1px solid #475569;
+      background: #1e293b;
+      color: #cbd5e1;
     }
 
     #language-button:hover {
-      border-color: #9ca3af;
-      background: #f9fafb;
+      border-color: #64748b;
+      background: #334155;
     }
 
     /* Mobile Header */
     .mobile-header {
       display: none;
       padding: 12px 16px;
-      background: #fff;
-      border-bottom: 1px solid #eee;
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
       justify-content: space-between;
       align-items: center;
       position: sticky;
@@ -126,7 +134,7 @@
 
     .mobile-filter-btn {
       padding: 8px 16px;
-      background: #222;
+      background: #3b82f6;
       color: white;
       border-radius: 20px;
       border: none;
@@ -139,8 +147,8 @@
       display: none;
       width: 100%;
       margin-bottom: 16px;
-      background: #f3f4f6;
-      color: #333;
+      background: #334155;
+      color: #cbd5e1;
       border: none;
       padding: 12px;
       border-radius: 8px;
@@ -148,16 +156,106 @@
       cursor: pointer;
     }
 
+    /* Settings Button */
+    .settings-btn {
+      background: transparent;
+      border: 1px solid #475569;
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 18px;
+      transition: all 0.2s;
+      margin-left: 8px;
+      color: #cbd5e1;
+    }
+
+    .settings-btn:hover {
+      background: #334155;
+      border-color: #64748b;
+    }
+
+    /* Settings Table */
+    .settings-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+
+    .settings-table th {
+      text-align: left;
+      padding: 12px 8px;
+      border-bottom: 2px solid #334155;
+      font-weight: 600;
+      font-size: 13px;
+      color: #94a3b8;
+    }
+
+    .settings-table td {
+      padding: 12px 8px;
+      border-bottom: 1px solid #1e293b;
+      font-size: 14px;
+    }
+
+    .settings-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Toggle Switch */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #475569;
+      transition: 0.3s;
+      border-radius: 24px;
+    }
+
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.3s;
+      border-radius: 50%;
+    }
+
+    input:checked + .toggle-slider {
+      background-color: #3b82f6;
+    }
+
+    input:checked + .toggle-slider:before {
+      transform: translateX(20px);
+    }
+
     .toast {
       position: fixed;
       top: 20px;
       left: 50%;
       transform: translateX(-50%);
-      background: #222;
+      background: #1e293b;
       color: white;
       padding: 12px 24px;
       border-radius: 50px;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
       display: flex;
       align-items: center;
       gap: 12px;
@@ -166,11 +264,11 @@
       cursor: pointer;
       font-size: 14px;
       font-weight: 500;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid #334155;
     }
 
     .toast:hover {
-      background: #333;
+      background: #334155;
       transform: translateX(-50%) translateY(2px);
     }
 
@@ -189,11 +287,11 @@
     /* Unified search input with chips */
     .searchBox {
       margin-top: 6px;
-      border: 1px solid #ccc;
+      border: 1px solid #475569;
       border-radius: 12px;
       padding: 8px;
-      background: white;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      background: #0f172a;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
     }
 
     .chips {
@@ -208,11 +306,11 @@
       gap: 6px;
       align-items: center;
       padding: 4px 10px;
-      border: 1px solid #e5e7eb;
+      border: 1px solid #475569;
       border-radius: 999px;
       font-size: 12px;
-      background: #f9fafb;
-      color: #374151;
+      background: #1e293b;
+      color: #cbd5e1;
     }
 
     .chip button {
@@ -221,13 +319,13 @@
       cursor: pointer;
       font-size: 16px;
       line-height: 1;
-      color: #9ca3af;
+      color: #64748b;
       padding: 0 2px;
     }
 
     .chipType {
       font-size: 10px;
-      color: #9ca3af;
+      color: #64748b;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
@@ -239,22 +337,28 @@
       padding: 4px;
       box-sizing: border-box;
       font-size: 15px;
+      background: transparent;
+      color: #e2e8f0;
+    }
+
+    .inputInline::placeholder {
+      color: #64748b;
     }
 
     /* Autocomplete suggestions */
     .results {
       margin-top: 6px;
-      border: 1px solid #e5e7eb;
+      border: 1px solid #475569;
       border-radius: 12px;
       overflow: hidden;
-      background: white;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      background: #1e293b;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
     }
 
     .resultItem {
       padding: 10px 12px;
       cursor: pointer;
-      border-bottom: 1px solid #f3f4f6;
+      border-bottom: 1px solid #334155;
       display: flex;
       justify-content: space-between;
       gap: 10px;
@@ -267,12 +371,12 @@
 
     .resultItem:hover,
     .resultItem.selected {
-      background: #f9fafb;
+      background: #334155;
     }
 
     .suggestionType {
       font-size: 11px;
-      color: #9ca3af;
+      color: #64748b;
       white-space: nowrap;
     }
 
@@ -301,7 +405,7 @@
       width: 100%;
       border-radius: 12px;
       display: block;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
       aspect-ratio: 2/3;
       object-fit: cover;
     }
@@ -311,12 +415,12 @@
       margin-top: 10px;
       font-weight: 600;
       line-height: 1.3;
-      color: #111;
+      color: #f1f5f9;
     }
 
     .meta {
       font-size: 12px;
-      color: #666;
+      color: #94a3b8;
       margin-top: 4px;
       display: flex;
       align-items: center;
@@ -328,9 +432,9 @@
       padding-bottom: 150%;
       display: grid;
       place-items: center;
-      background: #f3f4f6;
+      background: #1e293b;
       border-radius: 12px;
-      color: #9ca3af;
+      color: #64748b;
       font-size: 13px;
     }
 
@@ -338,7 +442,7 @@
     .modalOverlay {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.6);
+      background: rgba(0, 0, 0, 0.8);
       backdrop-filter: blur(4px);
       display: none;
       align-items: center;
@@ -352,14 +456,14 @@
     }
 
     .modal {
-      background: #fff;
+      background: #1e293b;
       border-radius: 20px;
       max-width: 900px;
       width: 100%;
       max-height: 90vh;
       overflow: auto;
-      border: 1px solid #e5e7eb;
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      border: 1px solid #334155;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
     }
 
     .modalHeader {
@@ -369,7 +473,7 @@
       padding: 20px 24px 0 24px;
       position: sticky;
       top: 0;
-      background: white;
+      background: #1e293b;
       z-index: 10;
     }
 
@@ -378,14 +482,14 @@
       background: transparent;
       padding: 8px;
       cursor: pointer;
-      color: #666;
+      color: #94a3b8;
       transition: all 0.2s;
       font-size: 14px;
       font-weight: 500;
     }
 
     .modalClose:hover {
-      color: #111;
+      color: #f1f5f9;
       background: transparent;
     }
 
@@ -402,7 +506,7 @@
 
     .poster img {
       border-radius: 12px;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
     }
 
     .pillRow {
@@ -416,19 +520,19 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      border: 1px solid #e5e7eb;
+      border: 1px solid #475569;
       border-radius: 999px;
       padding: 6px 12px;
       font-size: 12px;
       cursor: pointer;
-      background: #fff;
-      color: #374151;
+      background: #0f172a;
+      color: #cbd5e1;
       transition: all 0.2s;
     }
 
     .pill:hover {
-      background: #f9fafb;
-      border-color: #d1d5db;
+      background: #334155;
+      border-color: #64748b;
     }
 
     .providerGrid {
@@ -445,21 +549,21 @@
       cursor: pointer;
       padding: 6px;
       border-radius: 12px;
-      border: 1px solid #eee;
+      border: 1px solid #334155;
       transition: all 0.2s;
       height: 64px;
       box-sizing: border-box;
-      background: #fff;
+      background: #0f172a;
     }
 
     .providerItem:hover {
-      background: #f9fafb;
-      border-color: #d1d5db;
+      background: #1e293b;
+      border-color: #475569;
     }
 
     .providerItem.selected-provider {
-      border-color: #fbbf24;
-      background: #fffbeb;
+      border-color: #f59e0b;
+      background: #422006;
     }
 
     .providerItem img {
@@ -478,7 +582,7 @@
     .sectionTitle {
       margin-top: 20px;
       font-size: 14px;
-      color: #111;
+      color: #f1f5f9;
       font-weight: 700;
       letter-spacing: -0.01em;
     }
@@ -486,14 +590,35 @@
     .overview {
       margin-top: 8px;
       line-height: 1.6;
-      color: #374151;
+      color: #cbd5e1;
       font-size: 15px;
     }
 
     .subtle {
-      color: #6b7280;
+      color: #94a3b8;
       font-size: 13px;
       margin-top: 6px;
+    }
+
+    /* Tables in modals */
+    table {
+      color: #cbd5e1;
+    }
+
+    table th {
+      color: #94a3b8;
+    }
+
+    table td {
+      color: #cbd5e1;
+    }
+
+    table tr {
+      border-color: #334155 !important;
+    }
+
+    .provider-row:hover {
+      background: #334155 !important;
     }
 
     @media (max-width: 800px) {
@@ -510,7 +635,7 @@
         position: fixed;
         inset: 0;
         z-index: 2000;
-        background: #fff;
+        background: #1e293b;
         width: 100%;
         height: 100%;
         padding: 20px;
@@ -608,8 +733,11 @@
         <label class="label">Search for Title/Genre/Person</label>
         <div class="searchBox">
           <div id="chips" class="chips"></div>
-          <input id="searchInput" class="inputInline" placeholder="Search movies, actors, genres, keywords…"
-            autocomplete="off" />
+          <div style="display: flex; align-items: center;">
+            <input id="searchInput" class="inputInline" placeholder="Search movies, actors, genres, keywords…"
+              autocomplete="off" style="flex: 1;" />
+            <button id="settings-btn" class="settings-btn" title="Settings">⚙️</button>
+          </div>
         </div>
 
         <div id="suggestions" class="results" style="display:none;"></div>
@@ -681,6 +809,47 @@
         <button id="modalClose" class="modalClose" type="button">Close</button>
       </div>
       <div id="modalBody" class="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModalOverlay" class="modalOverlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle" style="max-width: 600px;">
+      <div class="modalHeader">
+        <div>
+          <h2 id="settingsModalTitle" style="margin:0;">Settings</h2>
+          <div class="subtle" style="font-size: 13px; margin-top: 4px;">Customize your search experience</div>
+        </div>
+        <button id="settingsModalClose" class="modalClose" type="button">Close</button>
+      </div>
+      <div style="padding: 24px;">
+        <table class="settings-table">
+          <thead>
+            <tr>
+              <th style="width: 60px;">Switch</th>
+              <th>Description</th>
+              <th style="width: 80px; text-align: center;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="setting-showsimilar">
+                  <span class="toggle-slider"></span>
+                </label>
+              </td>
+              <td>
+                <strong>Show Similar Results</strong><br>
+                <span style="font-size: 13px; color: #6b7280;">When processing search, don't restrict the results to only a strict match</span>
+              </td>
+              <td style="text-align: center;">
+                <span id="status-showsimilar" style="font-size: 12px; color: #6b7280;">Off</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 

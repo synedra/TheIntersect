@@ -92,23 +92,38 @@ def main():
     # Process Autocomplete for this specific dataset (separate file)
     autocomplete_file = os.path.join(os.path.dirname(__file__), '../autocomplete_upload.json')
     
-    # Extract titles/names from new data only
-    new_titles = set()
+    # Extract {name, id, type} from new data
+    autocomplete_data = []
+    seen = set()
+
     for m in movies:
         if 'title' in m:
-            new_titles.add(m['title'])
+            clean_id = str(m.get('id', ''))
+            key = ('movie', clean_id)
+            if key not in seen:
+                seen.add(key)
+                autocomplete_data.append({
+                    "name": m['title'],
+                    "id": clean_id,
+                    "type": "movie"
+                })
             
     for t in tv_shows:
         if 'name' in t:
-            new_titles.add(t['name'])
-
-    # Sort
-    final_list = sorted(list(new_titles))
+            clean_id = str(t.get('id', ''))
+            key = ('tv', clean_id)
+            if key not in seen:
+                seen.add(key)
+                autocomplete_data.append({
+                    "name": t['name'],
+                    "id": clean_id,
+                    "type": "tv"
+                })
 
     with open(autocomplete_file, 'w') as f:
-        json.dump(final_list, f)
+        json.dump(autocomplete_data, f, indent=2)
 
-    print(f"Created {autocomplete_file} with {len(final_list)} entries matching the upload dataset.")
+    print(f"Created {autocomplete_file} with {len(autocomplete_data)} entries matching the upload dataset.")
 
 if __name__ == "__main__":
     main()

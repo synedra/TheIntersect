@@ -118,6 +118,28 @@ let selectedFilters = []; // Array of {type, id, name}
 let selectedProviders = new Set();
 let searchMode = { stream: true, rentBuy: false, movies: true, tvshows: false };
 
+// Settings
+let settings = {
+  showSimilar: false
+};
+
+// Load settings from localStorage
+function loadSettings() {
+  const saved = localStorage.getItem('appSettings');
+  if (saved) {
+    try {
+      settings = { ...settings, ...JSON.parse(saved) };
+    } catch (e) {
+      console.error('Error loading settings:', e);
+    }
+  }
+}
+
+// Save settings to localStorage
+function saveSettings() {
+  localStorage.setItem('appSettings', JSON.stringify(settings));
+}
+
 // Common streaming providers configuration
 const PROVIDER_CONFIG = [
   { name: "Netflix", logo: "/netflix_logo.jpg", url: "https://www.netflix.com" },
@@ -304,6 +326,12 @@ async function astraApi(action, params = {}) {
   try {
     const url = new URL("/.netlify/functions/astra", window.location.origin);
     url.searchParams.set("action", action);
+    
+    // Add settings to API calls
+    if (settings.showSimilar !== undefined) {
+      url.searchParams.set("show_similar", settings.showSimilar ? "true" : "false");
+    }
+    
     Object.entries(params).forEach(([key, value]) => {
       url.searchParams.set(key, value);
     });
@@ -1167,6 +1195,66 @@ function setupLanguageModal() {
   }
 }
 
+function setupSettingsModal() {
+  const settingsBtn = document.getElementById('settings-btn');
+  const settingsModalOverlay = document.getElementById('settingsModalOverlay');
+  const settingsModalClose = document.getElementById('settingsModalClose');
+  const showSimilarCheckbox = document.getElementById('setting-showsimilar');
+  const showSimilarStatus = document.getElementById('status-showsimilar');
+  
+  if (!settingsBtn || !settingsModalOverlay) return;
+  
+  // Load settings
+  loadSettings();
+  
+  // Update UI to reflect current settings
+  function updateSettingsUI() {
+    if (showSimilarCheckbox) {
+      showSimilarCheckbox.checked = settings.showSimilar;
+      if (showSimilarStatus) {
+        showSimilarStatus.textContent = settings.showSimilar ? 'On' : 'Off';
+        showSimilarStatus.style.color = settings.showSimilar ? '#10b981' : '#6b7280';
+      }
+    }
+  }
+  
+  updateSettingsUI();
+  
+  // Open settings modal
+  settingsBtn.addEventListener('click', () => {
+    updateSettingsUI();
+    settingsModalOverlay.classList.add('open');
+    settingsModalOverlay.setAttribute('aria-hidden', 'false');
+  });
+  
+  // Close settings modal
+  const closeSettingsModal = () => {
+    settingsModalOverlay.classList.remove('open');
+    settingsModalOverlay.setAttribute('aria-hidden', 'true');
+  };
+  
+  if (settingsModalClose) {
+    settingsModalClose.addEventListener('click', closeSettingsModal);
+  }
+  
+  settingsModalOverlay.addEventListener('click', (e) => {
+    if (e.target === settingsModalOverlay) {
+      closeSettingsModal();
+    }
+  });
+  
+  // Handle setting changes
+  if (showSimilarCheckbox) {
+    showSimilarCheckbox.addEventListener('change', (e) => {
+      settings.showSimilar = e.target.checked;
+      saveSettings();
+      updateSettingsUI();
+      // Optionally reload results if needed
+      // loadPage(1);
+    });
+  }
+}
+
 function updateLanguageLabel() {
   const languageFilters = selectedFilters.filter(f => f.type === "language");
   const languageButtonText = document.getElementById('language-button-text');
@@ -1201,6 +1289,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupAutocomplete();
   setupProviders();
   setupLanguageModal();
+  setupSettingsModal();
 
   const searchInput = document.getElementById("searchInput");
   const genreFilter = document.getElementById("genre-filter");
