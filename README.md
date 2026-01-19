@@ -1,4 +1,4 @@
-# Movie Key App (Astra DB Edition)
+		# Movie Key App (Astra DB Edition)
 
 This application is a next-generation movie and TV show browser designed to provide **true intersecting search capabilities**. It allows users to layer multiple criteria—such as Genre, Cast Member, and Streaming Provider—to drill down to exact results (e.g., "Show me Sci-Fi movies starring Tom Hanks that are available on Netflix").   The movie information and interaction is driven by [TMDB](https://tmdb.org)
 
@@ -83,8 +83,6 @@ OPENAI_API_KEY=
     ```bash
     node bin/setup_data.js
 
-    ```
-
 3.  Unzip the autocomplete index:
 
     ```bash
@@ -97,6 +95,8 @@ OPENAI_API_KEY=
 The application requires the Netlify framework to work - it serves the serverless functions for the front end to use.  You can run it locally with `netlify dev` or push it to the web with `netlify deploy --prod`
 
 ```bash
+netlify login
+netlify sites:create (you need to pick a unique name for the site)
 netlify dev
 ```
 
