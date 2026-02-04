@@ -1,5 +1,3 @@
-const TMDB_AUTH_API = "/.netlify/functions/tmdb_auth";
-
 // Inject spinner styles
 const spinnerStyle = document.createElement('style');
 spinnerStyle.innerHTML = `
@@ -444,7 +442,6 @@ async function loadPage(page = 1) {
     const genreFilters = selectedFilters.filter(f => f.type === "genre").map(f => f.name);
     const keywordFilters = selectedFilters.filter(f => f.type === "keyword").map(f => f.name);
     const languageFilters = selectedFilters.filter(f => f.type === "language").map(f => f.id);
-    // Treat movie filters as text searches (using name/title) so we find other movies with same title
     const movieFilters = selectedFilters.filter(f => f.type === "movie").map(f => f.name);
     const textFilters = selectedFilters.filter(f => f.type === "text").map(f => f.name);
     const providers = Array.from(selectedProviders);
@@ -1111,15 +1108,6 @@ function setupLanguageModal() {
     { code: 'en', name: 'English' }, { code: 'es', name: 'Spanish' }, { code: 'fr', name: 'French' }, { code: 'de', name: 'German' },
     { code: 'it', name: 'Italian' }, { code: 'pt', name: 'Portuguese' }, { code: 'ja', name: 'Japanese' }, { code: 'ko', name: 'Korean' },
     { code: 'zh', name: 'Chinese' }, { code: 'hi', name: 'Hindi' }, { code: 'ru', name: 'Russian' }, { code: 'ar', name: 'Arabic' },
-    { code: 'th', name: 'Thai' }, { code: 'nl', name: 'Dutch' }, { code: 'sv', name: 'Swedish' }, { code: 'tr', name: 'Turkish' },
-    { code: 'pl', name: 'Polish' }, { code: 'da', name: 'Danish' }, { code: 'fi', name: 'Finnish' }, { code: 'no', name: 'Norwegian' },
-    { code: 'nb', name: 'Norwegian Bokmål' }, { code: 'af', name: 'Afrikaans' }, { code: 'am', name: 'Amharic' }, { code: 'bg', name: 'Bulgarian' },
-    { code: 'bn', name: 'Bengali' }, { code: 'ca', name: 'Catalan' }, { code: 'cn', name: 'Cantonese' }, { code: 'cs', name: 'Czech' },
-    { code: 'cy', name: 'Welsh' }, { code: 'dv', name: 'Divehi' }, { code: 'el', name: 'Greek' }, { code: 'et', name: 'Estonian' },
-    { code: 'eu', name: 'Basque' }, { code: 'fa', name: 'Persian' }, { code: 'gl', name: 'Galician' }, { code: 'gu', name: 'Gujarati' },
-    { code: 'he', name: 'Hebrew' }, { code: 'hr', name: 'Croatian' }, { code: 'hu', name: 'Hungarian' }, { code: 'hy', name: 'Armenian' },
-    { code: 'id', name: 'Indonesian' }, { code: 'is', name: 'Icelandic' }, { code: 'ka', name: 'Georgian' }, { code: 'kk', name: 'Kazakh' },
-    { code: 'ku', name: 'Kurdish' }, { code: 'lt', name: 'Lithuanian' }, { code: 'lv', name: 'Latvian' }, { code: 'ml', name: 'Malayalam' },
     { code: 'ms', name: 'Malay' }, { code: 'pa', name: 'Punjabi' }, { code: 'ro', name: 'Romanian' }, { code: 'sr', name: 'Serbian' },
     { code: 'ta', name: 'Tamil' }, { code: 'te', name: 'Telugu' }, { code: 'tl', name: 'Tagalog' }, { code: 'uk', name: 'Ukrainian' },
     { code: 'ur', name: 'Urdu' }, { code: 'uz', name: 'Uzbek' }, { code: 'xx', name: 'Unknown' }

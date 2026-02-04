@@ -67,18 +67,30 @@ async function generateEmbedding(text) {
   return data.data[0].embedding;
 }
 
+function getCollection(collInfo) {
+  if (collInfo.keyspace) {
+    const keyspaceEnvVar = collInfo.keyspace === 'boardgames' 
+      ? process.env.ASTRA_BOARDGAME_KEYSPACE 
+      : collInfo.keyspace;
+    
+    const dbInstance = client.db(process.env.ASTRA_DB_API_ENDPOINT, { 
+      keyspace: keyspaceEnvVar
+    });
+    console.log(`[getCollection] Using keyspace: ${keyspaceEnvVar} for collection: ${collInfo.name}`);
+    return dbInstance.collection(collInfo.name);
+  }
+  return db.collection(collInfo.name);
+}
+
 async function queryCollections(db, collections, finalFilter, searchQuery, limit) {
-  // Execute queries in parallel using Promise.all
   const promises = collections.map(async (collInfo) => {
     try {
-      const collection = db.collection(collInfo.name);
+      const collection = getCollection(collInfo);
 
-      // Log the exact query being executed to debug timeouts
-      console.log(`[Astra Call] Collection: ${collInfo.name}`);
+      console.log(`[Astra Call] Collection: ${collInfo.name} ${collInfo.keyspace ? `(keyspace: ${collInfo.keyspace})` : ''}`);
       console.log(`Filter:`, JSON.stringify(finalFilter));
       console.log(`Options:`, JSON.stringify(searchQuery || { limit }));
 
-      // Exclude vector data to reduce payload size and prevent timeouts
       const options = { ...(searchQuery || { limit }), projection: { $vector: 0 } };
 
       let results;
@@ -94,13 +106,15 @@ async function queryCollections(db, collections, finalFilter, searchQuery, limit
         results = await collection.find(finalFilter, options).toArray();
       }
       
-      // Tag results
+      console.log(`[Astra Call] Retrieved ${results.length} results from ${collInfo.name}`);
+      
       return results.map(r => {
         r.content_type = collInfo.type;
         return r;
       });
     } catch (e) {
       console.error(`Error querying ${collInfo.name}:`, e);
+      console.error(`Error details:`, e.message, e.stack);
       return [];
     }
   });
@@ -114,7 +128,7 @@ export async function handler(event) {
   const action = qs.action;
   
   // Read settings from query parameters
-  const showSimilar = qs.show_similar === "true";
+  const showSimilar  = qs.show_similar = "true";
   
   // Client and db are now global
   
@@ -123,6 +137,7 @@ export async function handler(event) {
   const collections = [];
   if (contentTypes.includes('movies')) collections.push({ name: 'movies2026', type: 'movie' });
   if (contentTypes.includes('tvshows')) collections.push({ name: 'tvshows2026', type: 'tv' });
+  if (contentTypes.includes('boardgames')) collections.push({ name: 'bgg_board_games', type: 'boardgame', keyspace: 'boardgames' });
   if (collections.length === 0) collections.push({ name: 'movies2026', type: 'movie' });
   
   const moviesCollection = db.collection('movies2026');
@@ -147,6 +162,9 @@ export async function handler(event) {
 
         // NEW: Type filter (movie, person, genre)
         const typeFilter = qs.type_filter; // Expected values: "movie", "person", "genre"
+
+        // Check if we're searching board games
+        const isBoardGameSearch = contentTypes.includes('boardgames') && contentTypes.length === 1;
 
         // Check for "bare genre search" cache hit
         // Conditions: No text query, no specific movie/person/keyword/language/provider filters, but Genres ARE selected.
@@ -175,7 +193,7 @@ export async function handler(event) {
              const results = [];
              for(const c of collections) {
                  try {
-                     const docs = await db.collection(c.name).find({ _id: { $in: movieIds } }).toArray();
+                     const docs = await getCollection(c).find({ _id: { $in: movieIds } }).toArray();
                      docs.forEach(d => { d.content_type = c.type; results.push(d); });
                  } catch(e){}
              }
@@ -184,7 +202,7 @@ export async function handler(event) {
              if (results.length > 0) {
                  // Check if showSimilar setting is enabled
                  if (showSimilar && results[0].$vector) {
-                     console.log("[Search] showSimilar enabled, finding similar movies to selected item");
+                     console.log("[Search] showSimilar enabled, finding similar items to selected item");
                      
                      // Get the vector from the first matched movie
                      let sourceVector = results[0].$vector;
@@ -233,65 +251,71 @@ export async function handler(event) {
         
         const filterConditions = [];
 
-        // AND Logic for Search Box Filters
-        // (Lists already parsed above)
-
-        personList.forEach(p => filterConditions.push({ cast: p }));
-        genreList.forEach(g => filterConditions.push({ genres: g }));
-        // Fixed: search inside the 'name' field of keywords
-        keywordList.forEach(k => filterConditions.push({ "keywords.name": k }));
-        
-        // Apply type filter
-        if (typeFilter === "person" && personList.length === 0) {
-            // If user selected "person" type but didn't specify a person, we can't filter meaningfully
-            // Option 1: Return empty results
-            // Option 2: Ignore the type filter
-            // Going with Option 2 for better UX
-        } else if (typeFilter === "genre" && genreList.length === 0) {
-            // Similar handling for genre
-        }
-        // Note: "movie" type filter is handled by collection selection (contentTypes)
-        
-        if (personList.length === 1 || genreList.length === 1 || keywordList.length === 1) {
-             filterConditions.push({ vote_average: { $gt: 7 } });
-        }
-        
-        // OR Logic for Language
-        // (languages already parsed above)
-        if (languages.length > 0) filterConditions.push({ original_language: { $in: languages } });
-
-        // OR Logic for Providers
-        // (providers and paymentTypes already parsed above)
-        
-        if (providers.length > 0) {
-             const providerClauses = providers.map(provider => {
-                 let variants = [provider];
-                 if (provider === "Disney+") variants.push("Disney Plus");
-                 if (provider === "Paramount+") variants.push("Paramount Plus", "Paramount Plus Essential", "Paramount Plus Premium");
-                 if (provider === "Apple TV+") variants.push("Apple TV", "Apple TV Plus");
-                 if (provider === "Amazon Prime Video") variants.push("Amazon Prime Video with Ads");
-                 if (provider === "Peacock") variants.push("Peacock Premium", "Peacock Premium Plus");
-                 if (provider === "YouTube") variants.push("YouTube Premium", "YouTube TV");
-                 if (provider === "Tubi") variants.push("Tubi TV");
-                 
-                 const clauses = [];
-                 if (paymentTypes.includes('stream')) clauses.push({ "watch_providers.US.stream": { $in: variants } });
-                 if (paymentTypes.includes('rent')) clauses.push({ "watch_providers.US.rent": { $in: variants } });
-                 if (paymentTypes.includes('buy')) clauses.push({ "watch_providers.US.buy": { $in: variants } });
-                 if (clauses.length === 0) clauses.push({ "watch_providers.US.stream": { $in: variants } });
-                 
-                 return { $or: clauses };
+        // Board game specific filtering
+        if (isBoardGameSearch) {
+            // For board games, genres map to categories
+            genreList.forEach(cat => {
+                // Search across all category fields
+                const categoryConditions = [];
+                for (let i = 0; i < 10; i++) {
+                    categoryConditions.push({ [`category${i}`]: cat });
+                }
+                if (categoryConditions.length > 0) {
+                    filterConditions.push({ $or: categoryConditions });
+                }
             });
-            filterConditions.push({ $or: providerClauses });
+            
+            // Keywords map to mechanics for board games
+            keywordList.forEach(mech => {
+                const mechanicConditions = [];
+                for (let i = 0; i < 10; i++) {
+                    mechanicConditions.push({ [`mechanic${i}`]: mech });
+                }
+                if (mechanicConditions.length > 0) {
+                    filterConditions.push({ $or: mechanicConditions });
+                }
+            });
         } else {
-             const paymentClauses = [];
-             if (paymentTypes.includes('stream')) paymentClauses.push({ "watch_providers.US.stream": { $exists: true } });
-             if (paymentTypes.includes('rent')) paymentClauses.push({ "watch_providers.US.rent": { $exists: true } });
-             if (paymentTypes.includes('buy')) paymentClauses.push({ "watch_providers.US.buy": { $exists: true } });
-             if (paymentClauses.length > 0) filterConditions.push({ $or: paymentClauses });
+            // Movie/TV filtering (existing logic)
+            personList.forEach(p => filterConditions.push({ cast: p }));
+            genreList.forEach(g => filterConditions.push({ genres: g }));
+            keywordList.forEach(k => filterConditions.push({ "keywords.name": k }));
+            
+            if (personList.length === 1 || genreList.length === 1 || keywordList.length === 1) {
+                 filterConditions.push({ vote_average: { $gt: 7 } });
+            }
+            
+            if (languages.length > 0) filterConditions.push({ original_language: { $in: languages } });
+
+            if (providers.length > 0) {
+                 const providerClauses = providers.map(provider => {
+                     let variants = [provider];
+                     if (provider === "Disney+") variants.push("Disney Plus");
+                     if (provider === "Paramount+") variants.push("Paramount Plus", "Paramount Plus Essential", "Paramount Plus Premium");
+                     if (provider === "Apple TV+") variants.push("Apple TV", "Apple TV Plus");
+                     if (provider === "Amazon Prime Video") variants.push("Amazon Prime Video with Ads");
+                     if (provider === "Peacock") variants.push("Peacock Premium", "Peacock Premium Plus");
+                     if (provider === "YouTube") variants.push("YouTube Premium", "YouTube TV");
+                     if (provider === "Tubi") variants.push("Tubi TV");
+                     
+                     const clauses = [];
+                     if (paymentTypes.includes('stream')) clauses.push({ "watch_providers.US.stream": { $in: variants } });
+                     if (paymentTypes.includes('rent')) clauses.push({ "watch_providers.US.rent": { $in: variants } });
+                     if (paymentTypes.includes('buy')) clauses.push({ "watch_providers.US.buy": { $in: variants } });
+                     if (clauses.length === 0) clauses.push({ "watch_providers.US.stream": { $in: variants } });
+                     
+                     return { $or: clauses };
+                });
+                filterConditions.push({ $or: providerClauses });
+            } else {
+                 const paymentClauses = [];
+                 if (paymentTypes.includes('stream')) paymentClauses.push({ "watch_providers.US.stream": { $exists: true } });
+                 if (paymentTypes.includes('rent')) paymentClauses.push({ "watch_providers.US.rent": { $exists: true } });
+                 if (paymentTypes.includes('buy')) paymentClauses.push({ "watch_providers.US.buy": { $exists: true } });
+                 if (paymentClauses.length > 0) filterConditions.push({ $or: paymentClauses });
+            }
         }
 
-        // limit parsed above
         const finalFilter = filterConditions.length > 0 ? { $and: filterConditions } : {};
         
         let searchResults;
@@ -303,12 +327,23 @@ export async function handler(event) {
              let exactMatches = [];
              for(const c of collections) {
                  try {
-                     const coll = db.collection(c.name);
-                     const field = c.type === 'movie' ? 'title_lower' : 'name_lower';
-                     // Note: We use the existing filters here (e.g. providers) because the user might just be searching by text + provider
-                     const exacts = await coll.find({ ...finalFilter, [field]: query.toLowerCase() }, { limit: 20, sort: { popularity: -1 } }).toArray();
+                     const coll = getCollection(c);
+                     let field;
+                     if (c.type === 'boardgame') {
+                         // Board games use name0 (and it's not lowercased in the DB)
+                         field = 'name0';
+                     } else if (c.type === 'movie') {
+                         field = 'title_lower';
+                     } else {
+                         field = 'name_lower';
+                     }
+                     
+                     const searchQuery = c.type === 'boardgame' ? query : query.toLowerCase();
+                     const exacts = await coll.find({ ...finalFilter, [field]: searchQuery }, { limit: 20 }).toArray();
                      exacts.forEach(e => { e.content_type = c.type; exactMatches.push(e); });
-                 } catch(e){}
+                 } catch(e){
+                     console.error(`Error in exact match for ${c.name}:`, e);
+                 }
              }
              
              // If we have exact title matches
@@ -376,8 +411,16 @@ export async function handler(event) {
              }
              
              searchResults = await queryCollections(db, collections, effectiveFilter, searchOptions, limit);
-             // Ensure final array is sorted too
-             searchResults.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+             
+             // Sort appropriately
+             if (isBoardGameSearch) {
+                 searchResults.sort((a, b) => (b.average || 0) - (a.average || 0));
+             } else {
+                 searchResults.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+             }
+             
+             // Trim to limit after sorting
+             searchResults = searchResults.slice(0, limit);
         }
         
         const resultsResponse = searchResults.map(r => ({...r, id: r._id}));
@@ -396,16 +439,55 @@ export async function handler(event) {
 
       case "details": {
          const itemId = qs.id;
+         const itemType = qs.type; // 'boardgame', 'movie', or 'tv'
          if(!itemId) return { statusCode: 400, body: JSON.stringify({ error: "Missing item ID" }) };
          
-         const lookupCollections = [{ name: 'movies2026', type: 'movie' }, { name: 'tvshows2026', type: 'tv' }];
+         const lookupCollections = [
+           { name: 'movies2026', type: 'movie' }, 
+           { name: 'tvshows2026', type: 'tv' },
+           { name: 'bgg_board_games', type: 'boardgame', keyspace: 'boardgames' }
+         ];
+         
+         // If type is specified, look in that collection first
+         if (itemType === 'boardgame') {
+             try {
+                const collection = getCollection({ name: 'bgg_board_games', type: 'boardgame', keyspace: 'boardgames' });
+                // Board games use bggid - try both number and string formats
+                const numericId = parseInt(itemId, 10);
+                console.log(`[Details] Looking up boardgame with bggid: ${numericId} (type: ${typeof numericId})`);
+                
+                let item = await collection.findOne({ bggid: numericId });
+                if (!item) {
+                    // Try as string
+                    console.log(`[Details] Not found as number, trying as string: "${itemId}"`);
+                    item = await collection.findOne({ bggid: itemId.toString() });
+                }
+                if (!item) {
+                    // Try with _id
+                    console.log(`[Details] Not found by bggid, trying _id: "${itemId}"`);
+                    item = await collection.findOne({ _id: itemId.toString() });
+                }
+                
+                if(item) {
+                    console.log(`[Details] Found boardgame:`, item.name0 || item.name);
+                    item.content_type = 'boardgame';
+                    return { statusCode: 200, body: JSON.stringify({ results: [ { ...item, id: item.bggid || item._id } ] }) };
+                }
+                console.log(`[Details] Board game not found for id: ${itemId}`);
+             } catch (e) {
+                 console.warn(`Error finding boardgame ${itemId}:`, e);
+             }
+             return { statusCode: 404, body: JSON.stringify({ error: "Board game not found" }) };
+         }
+         
          for(const c of lookupCollections) {
              try {
-                const collection = db.collection(c.name);
+                const collection = getCollection(c);
                 const item = await collection.findOne({ _id: itemId });
                 if(item) {
                     item.content_type = c.type;
-                    return { statusCode: 200, body: JSON.stringify(item) };
+                    // Always return as { results: [item] } for frontend consistency
+                    return { statusCode: 200, body: JSON.stringify({ results: [ { ...item, id: item._id } ] }) };
                 }
              } catch (e) {
                  console.warn(`Error finding item ${itemId} in ${c.name}:`, e);
@@ -415,12 +497,12 @@ export async function handler(event) {
       }
 
       case "discover": {
+        const discoverStartTime = Date.now();
         const limit = parseInt(qs.limit) || 20;
 
-        // Check cache
         const cacheKey = `discover:${contentTypes.sort().join(',')}:${limit}`;
         const now = Date.now();
-        const TTL = 3600 * 1000; // 1 hour
+        const TTL = 60 * 1000; // 1 minute cache for testing
         if (discoverCache[cacheKey] && (now - discoverCache[cacheKey].timestamp < TTL)) {
             console.log(`[Cache] Serving discover results from cache for key: ${cacheKey}`);
             return { statusCode: 200, body: JSON.stringify(discoverCache[cacheKey].data) };
@@ -428,24 +510,76 @@ export async function handler(event) {
 
         const minPopularity = collections.length > 1 ? 100 : 75;
         const allResults = [];
+
+        console.log(`[Discover] Starting query for ${collections.length} collections:`, collections.map(c => c.name));
+        console.log(`[Discover] Parameters - limit: ${limit}, minPopularity: ${minPopularity}`);
+
         for (const collInfo of collections) {
+          const startTime = Date.now();
           try {
-            const collection = db.collection(collInfo.name);
-            const results = await collection.find({ popularity: { $gte: minPopularity } }, { sort: { popularity: -1 }, limit: limit * 2 }).toArray();
-            results.forEach(item => { item.content_type = collInfo.type; allResults.push(item); });
-          } catch (e) {}
+            const collection = getCollection(collInfo);
+            let results;
+
+            console.log(`[Discover] Starting ${collInfo.name} (type: ${collInfo.type}) at ${new Date().toISOString()}`);
+
+            if (collInfo.type === 'boardgame') {
+              // For board games: filter for rating > 7 and at least 1000 user ratings to stay under 10k sortable limit
+              console.log(`[Discover] ${collInfo.name} - Query: { average: { $gt: 7 }, usersrated: { $gte: 1000 } }, sort: { usersrated: -1 }, limit: ${limit * 4}`);
+              results = await collection.find({ average: { $gt: 7 }, usersrated: { $gte: 1000 } }, { sort: { usersrated: -1 }, limit: limit * 4 }).toArray();
+              console.log(`[Discover] ${collInfo.name} - Query completed in ${Date.now() - startTime}ms, returned ${results.length} results`);
+
+              // Ensure each result has bggid as id
+              results = results.map(r => ({ ...r, id: r.bggid || r._id }));
+
+              // Sort in memory by usersrated descending (most popular first)
+              results.sort((a, b) => (b.usersrated || 0) - (a.usersrated || 0));
+            } else {
+              console.log(`[Discover] ${collInfo.name} - Query: { popularity: { $gte: ${minPopularity} } }, sort: { popularity: -1 }, limit: ${limit * 2}`);
+              const queryStartTime = Date.now();
+              results = await collection.find({ popularity: { $gte: minPopularity } }, { sort: { popularity: -1 }, limit: limit * 2 }).toArray();
+              const queryDuration = Date.now() - queryStartTime;
+              console.log(`[Discover] ${collInfo.name} - Query completed in ${queryDuration}ms, returned ${results.length} results`);
+
+              if (queryDuration > 5000) {
+                console.warn(`[Discover] ${collInfo.name} - SLOW QUERY WARNING: took ${queryDuration}ms`);
+              }
+            }
+            
+            results.forEach(item => {
+              item.content_type = collInfo.type;
+              allResults.push(item);
+            });
+
+            const totalTime = Date.now() - startTime;
+            console.log(`[Discover] ${collInfo.name} - Total processing time: ${totalTime}ms`);
+          } catch (e) {
+            const totalTime = Date.now() - startTime;
+            console.error(`[Discover] ${collInfo.name} - ERROR after ${totalTime}ms:`, e);
+            console.error(`[Discover] ${collInfo.name} - Error message:`, e.message);
+            console.error(`[Discover] ${collInfo.name} - Error stack:`, e.stack);
+          }
         }
-        allResults.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+
+        console.log(`[Discover] All collections queried. Total results before sorting: ${allResults.length}`);
         
-        const responseData = { results: allResults.slice(0, limit).map(r => ({...r, id: r._id})) };
+        // Sort all results by their respective rating metric (descending)
+        allResults.sort((a, b) => {
+          const aScore = a.popularity || a.average || 0;
+          const bScore = b.popularity || b.average || 0;
+          return bScore - aScore;
+        });
         
-        // Update cache
+        const responseData = { results: allResults.slice(0, limit).map(r => ({...r, id: r.bggid || r._id})) };
+
         discoverCache[cacheKey] = {
             timestamp: now,
             data: responseData
         };
+
+        const totalDiscoverTime = Date.now() - discoverStartTime;
+        console.log(`[Discover] COMPLETE - Total time: ${totalDiscoverTime}ms, Returned ${responseData.results.length} results`);
         console.log(`[Cache] Updated discover cache for key: ${cacheKey}`);
-        
+
         return { statusCode: 200, body: JSON.stringify(responseData) };
       }
 
@@ -673,6 +807,99 @@ export async function handler(event) {
         const finalResults = allSimilarResults.slice(0, limit).map(item => ({ ...item, id: item._id }));
 
         return { statusCode: 200, body: JSON.stringify({ results: finalResults }) };
+      }
+
+      case "similar_boardgames": {
+        const gameId = qs.id;
+        const limit = parseInt(qs.limit) || 6;
+        if (!gameId) return { statusCode: 400, body: JSON.stringify({ error: "Missing game ID" }) };
+
+        console.log(`[Similar Boardgames] Searching for similar games to: ${gameId}`);
+
+        const boardgameCollection = { name: 'bgg_board_games', type: 'boardgame', keyspace: 'boardgames' };
+        
+        try {
+          const collection = getCollection(boardgameCollection);
+          
+          // Try to find the source game by bggid first (like details does), then _id
+          const numericId = parseInt(gameId, 10);
+          let sourceGame = await collection.findOne({ bggid: numericId }, { projection: { $vector: 1, bggid: 1 } });
+          if (!sourceGame) {
+            sourceGame = await collection.findOne({ bggid: gameId.toString() }, { projection: { $vector: 1, bggid: 1 } });
+          }
+          if (!sourceGame) {
+            sourceGame = await collection.findOne({ _id: gameId }, { projection: { $vector: 1, bggid: 1 } });
+          }
+          
+          if (!sourceGame || !sourceGame.$vector) {
+            console.log("[Similar Boardgames] No vector found, falling back to category match");
+            
+            // Also try multiple lookup methods for the full game
+            let fullGame = await collection.findOne({ bggid: numericId });
+            if (!fullGame) fullGame = await collection.findOne({ bggid: gameId.toString() });
+            if (!fullGame) fullGame = await collection.findOne({ _id: gameId });
+            
+            if (!fullGame) {
+              return { statusCode: 200, body: JSON.stringify({ results: [] }) };
+            }
+            
+            const categories = [];
+            for (let i = 0; i < 10; i++) {
+              if (fullGame[`category${i}`]) categories.push(fullGame[`category${i}`]);
+            }
+            
+            if (categories.length === 0) {
+              return { statusCode: 200, body: JSON.stringify({ results: [] }) };
+            }
+            
+            const orConditions = categories.map(cat => ({
+              [`category0`]: cat
+            }));
+            
+            const similarGames = await collection.find(
+              { $or: orConditions },
+              { limit: limit + 5 }
+            ).toArray();
+            
+            // Sort in memory by average
+            similarGames.sort((a, b) => (b.average || 0) - (a.average || 0));
+            
+            // Exclude source game by bggid
+            const sourceBggid = fullGame.bggid;
+            const filtered = similarGames.filter(g => g.bggid !== sourceBggid && g._id !== gameId).slice(0, limit);
+            return { statusCode: 200, body: JSON.stringify({ 
+              results: filtered.map(g => ({ ...g, id: g.bggid || g._id, content_type: 'boardgame' })) 
+            }) };
+          }
+          
+          let sourceVector = sourceGame.$vector;
+          if (!Array.isArray(sourceVector)) {
+            if (sourceVector._vector && Array.isArray(sourceVector._vector)) {
+              sourceVector = sourceVector._vector;
+            } else if (sourceVector.data && Array.isArray(sourceVector.data)) {
+              sourceVector = sourceVector.data;
+            }
+          }
+          
+          console.log(`[Similar Boardgames] Using vector search`);
+          const similarGames = await collection.find(
+            {},
+            { sort: { $vector: sourceVector }, limit: limit + 5, includeSimilarity: true }
+          ).toArray();
+          
+          // Exclude source game by bggid
+          const sourceBggid = sourceGame.bggid;
+          const filtered = similarGames.filter(g => g.bggid !== sourceBggid && g._id !== gameId).slice(0, limit);
+          filtered.sort((a, b) => (b.$similarity || 0) - (a.$similarity || 0));
+          
+          return { statusCode: 200, body: JSON.stringify({ 
+            results: filtered.map(g => ({ ...g, id: g.bggid || g._id, content_type: 'boardgame' })) 
+          }) };
+          
+        } catch (e) {
+          console.error(`[Similar Boardgames] Error:`, e);
+          return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+        }
       }
 
       default:
