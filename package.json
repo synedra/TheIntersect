@@ -17,6 +17,7 @@
     "@auth0/auth0-spa-js": "^2.11.0",
     "@datastax/astra-db-ts": "^2.1.2",
     "dotenv": "^17.2.3",
-    "node-fetch": "^2.7.0"
+    "node-fetch": "^2.7.0",
+    "xml2js": "^0.6.2"
   }
 }

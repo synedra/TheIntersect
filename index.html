@@ -717,38 +717,27 @@
         <h1 style="margin-top:0;" class="desktop-only">Movies <span class="badge">Astra DB</span></h1>
 
         <div id="auth-container" style="margin-bottom: 16px;">
-          <button id="btn-login" class="button" style="display: none;">Log In</button>
-          <button id="btn-logout" class="button secondary" style="display: none;">Log Out</button>
-          <div id="user-profile" style="margin-top: 8px; font-size: 13px; color: #333; display: none;"></div>
+          <div style="background: #0f172a; padding: 12px; border-radius: 8px; border: 1px solid #334155;">
+            <div style="font-size: 12px; color: #94a3b8; margin-bottom: 6px; font-weight: 600;">TMDB Login</div>
+            <button id="btn-login" class="button" style="display: none; margin-top: 0;">Log In with TMDB</button>
+            <button id="btn-logout" class="button secondary" style="display: none; margin-top: 0;">Log Out</button>
+            <div id="user-profile" style="margin-top: 8px; font-size: 13px; color: #cbd5e1; display: none;"></div>
+          </div>
         </div>
 
-        <label class="label" style="margin-bottom: 8px;">Content Type:</label>
-        <div style="display:flex; gap:8px; margin-bottom:16px;">
-          <button id="btn-movies" class="button"
-            style="margin-top:0; padding:8px; font-size:12px; background:#222; border:1px solid #222;">Movies</button>
-          <button id="btn-tvshows" class="button secondary"
-            style="margin-top:0; padding:8px; font-size:12px;">TV Shows</button>
-        </div>
-
-        <label class="label">Search for Title/Genre/Person</label>
+        <h2 id="search-label" class="label">Search for Title/Genre/Person</h2>
         <div class="searchBox">
           <div id="chips" class="chips"></div>
           <div style="display: flex; align-items: center;">
-            <input id="searchInput" class="inputInline" placeholder="Search movies, actors, genres, keywords…"
-              autocomplete="off" style="flex: 1;" />
+            <input id="searchInput" class="inputInline" placeholder="Search movies, actors, genres…" autocomplete="off"
+              style="flex: 1;" />
             <button id="settings-btn" class="settings-btn" title="Settings">⚙️</button>
           </div>
         </div>
 
         <div id="suggestions" class="results" style="display:none;"></div>
 
-        <label class="label" style="margin-bottom: 8px;">Select your streaming providers:</label>
-        <div style="display:flex; gap:8px; margin-bottom:8px;">
-          <button id="btn-stream" class="button"
-            style="margin-top:0; padding:8px; font-size:12px; background:#222; border:1px solid #222;">Stream</button>
-          <button id="btn-rent-buy" class="button secondary"
-            style="margin-top:0; padding:8px; font-size:12px;">Rent/Buy</button>
-        </div>
+        <h3 id="providers-label" class="label" style="margin-top: 16px;">Select your streaming providers:</h3>
         <div id="providers" class="providerGrid"></div>
 
         <button id="language-button" class="button secondary" style="text-align: left; display: flex; justify-content: space-between; align-items: center; margin-top: 16px;">
@@ -762,11 +751,15 @@
 
       <main class="main">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <h2 class="title" style="margin: 0; font-size: 20px;">Results</h2>
+          <div style="display: flex; gap: 8px;">
+            <button id="btn-content-movies" class="button" style="margin: 0; padding: 10px 20px; background: #3b82f6; border: 1px solid #3b82f6; color: white;">Movies</button>
+            <button id="btn-content-tvshows" class="button secondary" style="margin: 0; padding: 10px 20px;">TV Shows</button>
+            <button id="btn-content-boardgames" class="button secondary" style="margin: 0; padding: 10px 20px;">Board Games</button>
+          </div>
           <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: #666;">
             <span>Data provided by</span>
             <a href="https://tmdb.org" target="_blank" rel="noopener noreferrer">
-              <img src="/themoviedb.jpg" alt="The Movie Database"
+              <img id="logo-img" src="/themoviedb.jpg" alt="The Movie Database"
                 style="width: 80px; height: auto; display: block; aspect-ratio: auto; object-fit: contain; border-radius: 0; box-shadow: none;">
             </a>
           </div>
@@ -853,172 +846,15 @@
     </div>
   </div>
 
-  <script type="module" src="/main.js"></script>
+  <script src="/main.js"></script>
 
   <!-- Chatbot -->
   <script type="module">
     import Chatbot from "https://cdn.jsdelivr.net/npm/flowise-embed/dist/web.js"
-    try {
-      Chatbot.init({
-        chatflowid: "cbd9bc3a-d0db-4818-a7bd-23c86517ae9e",
+    Chatbot.init({
+        chatflowid: "7f78bd0d-693b-4513-88e2-88095cbf704e",
         apiHost: "https://cloud.flowiseai.com",
-        chatflowConfig: {
-          // topK: 2
-        },
-        observersConfig: {
-          // (optional) Allows you to execute code in parent based upon signal observations within the chatbot.
-          // The userinput field submitted to bot ("" when reset by bot)
-          observeUserInput: (userInput) => {
-            console.log({ userInput });
-          },
-          // The bot message stack has changed
-          observeMessages: (messages) => {
-            // console.log({ messages });
-            if (messages && messages.length > 0) {
-              const lastMessage = messages[messages.length - 1];
-              // Check if it's a bot message (Flowise usually uses 'apiMessage')
-              if (lastMessage.type === 'apiMessage' || lastMessage.role === 'assistant') {
-                const text = lastMessage.message || lastMessage.content || "";
-                const titles = new Set();
-
-                // 1. Look for text wrapped in double quotes
-                const quoteMatches = text.matchAll(/"([^"]+)"/g);
-                for (const match of quoteMatches) {
-                  if (match[1]) {
-                    let title = match[1].replace(/[,.!?;:]$/, '');
-                    if (title.length > 2 && !title.includes('\n')) { // Basic validation
-                       titles.add(title);
-                    }
-                  }
-                }
-
-                // 2. Look for numbered list items: "1. Title (Year)" or "1. **Title** (Year)"
-                // Regex: Start of line or space, number, dot, space, optional bold chars, capture title, optional bold chars, space, (Year)
-                const listMatches = text.matchAll(/(?:^|\n)\d+\.\s+(?:\*\*)?([^\n\r*]+?)(?:\*\*)?\s+\(\d{4}\)/g);
-                for (const match of listMatches) {
-                  if (match[1]) {
-                    let title = match[1].trim();
-                    titles.add(title);
-                  }
-                }
-
-                // 3. Look for "Letter - ItalicTitle" format: "A - *Avatar*" or "A - _Avatar_"
-                const italicMatches = text.matchAll(/(?:^|\n)\s*[\*\-•]?\s*[A-Z]\s+-\s+(?:\*|_)([^*_\n]+)(?:\*|_)/g);
-                for (const match of italicMatches) {
-                  if (match[1]) {
-                    let title = match[1].trim();
-                    titles.add(title);
-                  }
-                }
-
-                if (titles.size > 0) {
-                  const titleList = Array.from(titles);
-                  console.log("Found movie titles in chat:", titleList);
-                  if (window.showChatSuggestion) {
-                    window.showChatSuggestion(titleList);
-                  } else {
-                    console.warn("window.showChatSuggestion is not defined");
-                  }
-                }
-              }
-            }
-          },
-          // The bot loading signal changed
-          observeLoading: (loading) => {
-            console.log({ loading });
-          },
-        },
-        theme: {
-          button: {
-            backgroundColor: '#3B81F6',
-            right: 20,
-            bottom: 20,
-            size: 48, // small | medium | large | number
-            dragAndDrop: true,
-            iconColor: 'white',
-            customIconSrc: 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/svg/google-messages.svg',
-            autoWindowOpen: {
-              autoOpen: false, //parameter to control automatic window opening
-              openDelay: 2, // Optional parameter for delay time in seconds
-              autoOpenOnMobile: false, //parameter to control automatic window opening in mobile
-            },
-          },
-          tooltip: {
-            showTooltip: true,
-            tooltipMessage: 'Hi There 👋!',
-            tooltipBackgroundColor: 'black',
-            tooltipTextColor: 'white',
-            tooltipFontSize: 16,
-          },
-          form: {
-            backgroundColor: 'white',
-            textColor: 'black',
-          },
-          customCSS: ``, // Add custom CSS styles. Use !important to override default styles
-          chatWindow: {
-            showTitle: true,
-            showAgentMessages: true,
-            title: 'Flowise Bot',
-            titleAvatarSrc: 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/svg/google-messages.svg',
-            titleBackgroundColor: '#3B81F6',
-            titleTextColor: '#ffffff',
-            welcomeMessage: 'Welcome to the Movie Bot!  Ask me anything about movies, I love a challenge!',
-            errorMessage: 'Something went wrong. Please try again later.',
-            backgroundColor: '#ffffff',
-            backgroundImage: 'enter image path or link', // If set, this will overlap the background color of the chat window.
-            height: 700,
-            width: 400,
-            fontSize: 16,
-            starterPrompts: ['Give me 5 scary movies about clowns?', 'What movie had a character named Hans Gruber?'], // It overrides the starter prompts set by the chat flow passed
-            starterPromptFontSize: 15,
-            clearChatOnReload: false, // If set to true, the chat will be cleared when the page reloads
-            sourceDocsTitle: 'Sources:',
-            renderHTML: true,
-            botMessage: {
-              backgroundColor: '#f7f8ff',
-              textColor: '#303235',
-              showAvatar: true,
-              avatarSrc: 'https://raw.githubusercontent.com/zahidkhawaja/langchain-chat-nextjs/main/public/parroticon.png',
-            },
-            userMessage: {
-              backgroundColor: '#3B81F6',
-              textColor: '#ffffff',
-              showAvatar: true,
-              avatarSrc: 'https://raw.githubusercontent.com/zahidkhawaja/langchain-chat-nextjs/main/public/usericon.png',
-            },
-            textInput: {
-              placeholder: 'Ask anything about movies',
-              backgroundColor: '#ffffff',
-              textColor: '#303235',
-              sendButtonColor: '#3B81F6',
-              maxChars: 200,
-              maxCharsWarningMessage: 'You exceeded the characters limit. Please input less than 50 characters.',
-              autoFocus: true, // If not used, autofocus is disabled on mobile and enabled on desktop. true enables it on both, false disables it on both.
-              sendMessageSound: false,
-              // sendSoundLocation: "send_message.mp3", // If this is not used, the default sound effect will be played if sendSoundMessage is true.
-              receiveMessageSound: false,
-              // receiveSoundLocation: "receive_message.mp3", // If this is not used, the default sound effect will be played if receiveSoundMessage is true.
-            },
-            feedback: {
-              color: '#303235',
-            },
-            dateTimeToggle: {
-              date: true,
-              time: true,
-            },
-            footer: {
-              textColor: '#303235',
-              text: 'Powered by',
-              company: 'Flowise',
-              companyLink: 'https://flowiseai.com',
-            },
-          },
-        },
-      });
-      console.log("Chatbot initialized");
-    } catch (e) {
-      console.error("Chatbot initialization error:", e);
-    }
+    })
   </script>
 </body>
 

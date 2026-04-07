@@ -509,10 +509,19 @@ export async function handler(event) {
         }
 
         const minPopularity = collections.length > 1 ? 100 : 75;
+
+        // Date constraint: Last 10 years for movies/TV (YYYY-MM-DD format)
+        const tenYearsAgo = new Date();
+        tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
+        const minDate = tenYearsAgo.toISOString().split('T')[0]; // "YYYY-MM-DD"
+
+        // Year constraint for board games
+        const minYear = tenYearsAgo.getFullYear();
+
         const allResults = [];
 
         console.log(`[Discover] Starting query for ${collections.length} collections:`, collections.map(c => c.name));
-        console.log(`[Discover] Parameters - limit: ${limit}, minPopularity: ${minPopularity}`);
+        console.log(`[Discover] Parameters - limit: ${limit}, minPopularity: ${minPopularity}, minDate: ${minDate}, minYear: ${minYear}`);
 
         for (const collInfo of collections) {
           const startTime = Date.now();
@@ -523,9 +532,15 @@ export async function handler(event) {
             console.log(`[Discover] Starting ${collInfo.name} (type: ${collInfo.type}) at ${new Date().toISOString()}`);
 
             if (collInfo.type === 'boardgame') {
-              // For board games: filter for rating > 7 and at least 1000 user ratings to stay under 10k sortable limit
-              console.log(`[Discover] ${collInfo.name} - Query: { average: { $gt: 7 }, usersrated: { $gte: 1000 } }, sort: { usersrated: -1 }, limit: ${limit * 4}`);
-              results = await collection.find({ average: { $gt: 7 }, usersrated: { $gte: 1000 } }, { sort: { usersrated: -1 }, limit: limit * 4 }).toArray();
+              // For board games: use average (not rating) and filter to avoid timeout
+              // Query without sort to avoid exceeding sortable document limit, then sort in memory
+              const boardgameFilter = {
+                average: { $gt: 7 },
+                usersrated: { $gte: 1000 },
+                year: { $gte: minYear }  // Last 10 years
+              };
+              console.log(`[Discover] ${collInfo.name} - Query:`, boardgameFilter, `limit: ${limit * 4} (no sort - will sort in memory)`);
+              results = await collection.find(boardgameFilter, { limit: limit * 4 }).toArray();
               console.log(`[Discover] ${collInfo.name} - Query completed in ${Date.now() - startTime}ms, returned ${results.length} results`);
 
               // Ensure each result has bggid as id
@@ -533,10 +548,33 @@ export async function handler(event) {
 
               // Sort in memory by usersrated descending (most popular first)
               results.sort((a, b) => (b.usersrated || 0) - (a.usersrated || 0));
-            } else {
-              console.log(`[Discover] ${collInfo.name} - Query: { popularity: { $gte: ${minPopularity} } }, sort: { popularity: -1 }, limit: ${limit * 2}`);
+            } else if (collInfo.type === 'tv') {
+              // TV shows: Query without sort to avoid timeout (no index on popularity), then sort in memory
+              const tvFilter = {
+                popularity: { $gte: minPopularity },
+                first_air_date: { $gte: minDate }  // Last 10 years
+              };
+              console.log(`[Discover] ${collInfo.name} - Query:`, tvFilter, `limit: ${limit * 4} (no sort - will sort in memory)`);
               const queryStartTime = Date.now();
-              results = await collection.find({ popularity: { $gte: minPopularity } }, { sort: { popularity: -1 }, limit: limit * 2 }).toArray();
+              results = await collection.find(tvFilter, { limit: limit * 4 }).toArray();
+              const queryDuration = Date.now() - queryStartTime;
+              console.log(`[Discover] ${collInfo.name} - Query completed in ${queryDuration}ms, returned ${results.length} results`);
+
+              // Sort in memory by popularity descending
+              results.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+
+              if (queryDuration > 5000) {
+                console.warn(`[Discover] ${collInfo.name} - SLOW QUERY WARNING: took ${queryDuration}ms`);
+              }
+            } else {
+              // Movies: Use sort in query (has proper index on popularity)
+              const movieFilter = {
+                popularity: { $gte: minPopularity },
+                release_date: { $gte: minDate }  // Last 10 years
+              };
+              console.log(`[Discover] ${collInfo.name} - Query:`, movieFilter, `sort: { popularity: -1 }, limit: ${limit * 2}`);
+              const queryStartTime = Date.now();
+              results = await collection.find(movieFilter, { sort: { popularity: -1 }, limit: limit * 2 }).toArray();
               const queryDuration = Date.now() - queryStartTime;
               console.log(`[Discover] ${collInfo.name} - Query completed in ${queryDuration}ms, returned ${results.length} results`);
 
@@ -861,7 +899,7 @@ export async function handler(event) {
               { limit: limit + 5 }
             ).toArray();
             
-            // Sort in memory by average
+            // Sort in memory by average rating
             similarGames.sort((a, b) => (b.average || 0) - (a.average || 0));
             
             // Exclude source game by bggid
