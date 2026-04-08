@@ -848,13 +848,17 @@
 
   <script src="/main.js"></script>
 
+  <script src="/main.js"></script>
+
   <!-- Chatbot -->
-  <script type="module">
-    import Chatbot from "https://cdn.jsdelivr.net/npm/flowise-embed/dist/web.js"
-    Chatbot.init({
+  <script>
+    import('https://cdn.jsdelivr.net/npm/flowise-embed/dist/web.js').then(module => {
+      const Chatbot = module.default;
+      Chatbot.init({
         chatflowid: "7f78bd0d-693b-4513-88e2-88095cbf704e",
         apiHost: "https://cloud.flowiseai.com",
-    })
+      });
+    });
   </script>
 </body>
 

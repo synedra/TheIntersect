@@ -1,6 +1,7 @@
 ﻿// API Configuration
 const TMDB_AUTH_API = "/.netlify/functions/tmdb_auth";
 const BGG_AUTH_API = "/.netlify/functions/bgg_auth";
+const USER_DATA_API = "/.netlify/functions/user_data";
 
 // Toast notification
 function showToast(message) {
@@ -137,7 +138,12 @@ const logout = async () => {
       } catch (e) {
           console.warn("Logout failed on server", e);
       }
+      // Clear all user-related data
       localStorage.removeItem("tmdb_session_id");
+      localStorage.removeItem("user_id");
+      localStorage.removeItem("tmdb_account_id");
+      localStorage.removeItem("tmdb_username");
+      console.log("[Logout] User data cleared");
       updateUI();
   }
 };
@@ -149,13 +155,33 @@ const handleTmdbCallback = async () => {
 
     if (requestToken && approved === "true") {
         try {
+            // Step 1: Create session
             const res = await fetch(`${TMDB_AUTH_API}?action=create_session`, {
                 method: "POST",
                 body: JSON.stringify({ request_token: requestToken })
             });
             const data = await res.json();
+
             if (data.success && data.session_id) {
-                localStorage.setItem("tmdb_session_id", data.session_id);
+                const sessionId = data.session_id;
+                localStorage.setItem("tmdb_session_id", sessionId);
+
+                // Step 2: Get account details
+                const accountRes = await fetch(`${TMDB_AUTH_API}?action=get_account&session_id=${sessionId}`);
+                const accountData = await accountRes.json();
+
+                if (accountData.id) {
+                    // Store user data for intersect_users collection
+                    const userId = `tmdb_${accountData.id}`;
+                    localStorage.setItem("user_id", userId);
+                    localStorage.setItem("tmdb_account_id", String(accountData.id));
+                    localStorage.setItem("tmdb_username", accountData.username || accountData.name || "User");
+
+                    console.log(`[Login] User authenticated: ${userId} (${accountData.username})`);
+                } else {
+                    console.error("Failed to get account details", accountData);
+                }
+
                 // Clean URL
                 const newUrl = window.location.origin + window.location.pathname;
                 window.history.replaceState({}, document.title, newUrl);
@@ -167,6 +193,34 @@ const handleTmdbCallback = async () => {
             console.error("Error creating session", e);
         }
     }
+};
+
+// User Data Helper Functions
+const getUserData = async (contentType = null) => {
+  const userId = localStorage.getItem("user_id");
+  const username = localStorage.getItem("tmdb_username");
+
+  if (!userId) {
+    console.warn("[getUserData] No user_id found");
+    return null;
+  }
+
+  let url = `${USER_DATA_API}?action=get_user_data&user_id=${userId}`;
+  if (username) {
+    url += `&username=${encodeURIComponent(username)}`;
+  }
+  if (contentType) {
+    url += `&content_type=${contentType}`;
+  }
+
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    return data;
+  } catch (e) {
+    console.error("[getUserData] Error:", e);
+    return null;
+  }
 };
 
 let currentPage = 1;
@@ -1240,8 +1294,8 @@ async function openMovieModal(movieId) {
 
       modalBody.innerHTML = `
         <div class="poster">
-          ${modalImage 
-            ? `<img src="${escapeHtml(modalImage)}" alt="${escapeHtml(movie.name || movie.title || "")}" style="width:100%; aspect-ratio: 1; object-fit: cover; border-radius:8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />` 
+          ${modalImage
+            ? `<img src="${escapeHtml(modalImage)}" alt="${escapeHtml(movie.name || movie.title || "")}" style="width:100%; aspect-ratio: 1; object-fit: cover; border-radius:8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />`
             : `<div class="noposter" style="aspect-ratio: 1; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 48px; border-radius: 8px;">
                  🎲
                </div>`
@@ -1249,22 +1303,18 @@ async function openMovieModal(movieId) {
           ${bggLinkHtml}
         </div>
         <div style="background: white; padding: 16px; border-radius: 8px;">
-          <div class="sectionTitle" style="margin-bottom: 8px;">Description</div>
+          <div id="user-rating-section"></div>
+
+          ${gameDetailsHtml}
+
+          <div class="sectionTitle" style="margin-top: 16px; margin-bottom: 8px;">Description</div>
           <div class="overview" style="line-height: 1.6; color: #333; background: #f9fafb; padding: 12px; border-radius: 8px; border-left: 4px solid #667eea; white-space: pre-line; font-size: 13px;">${escapeHtml(cleanDescription)}</div>
           ${categoriesHtml}
           ${mechanicsHtml}
-          ${gameDetailsHtml}
           ${designersHtml}
           ${artistsHtml}
           ${publishersHtml}
           ${communityStatsHtml}
-
-          <div id="bgg-user-section" style="margin-top: 20px; padding: 16px; background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%); border-radius: 12px; color: white;">
-            <div class="sectionTitle" style="color: white; margin-bottom: 12px;">My BGG Activity</div>
-            <div id="bgg-user-actions">
-              <div class="subtle" style="color: rgba(255,255,255,0.8);">Loading...</div>
-            </div>
-          </div>
         </div>
 
         <div id="similar-boardgames-container" style="grid-column: 1 / -1; margin-top: 20px; border-top: 2px solid #eee; padding-top: 16px;">
@@ -1334,7 +1384,7 @@ async function openMovieModal(movieId) {
       });
 
       loadSimilarBoardGames(movieId);
-      loadBGGUserSection(movieId);
+      loadUserSection(movieId, false, true); // movieId, isTVShow=false, isBoardGame=true
 
       return;
     }
@@ -1476,16 +1526,17 @@ async function openMovieModal(movieId) {
         ${tmdbLinkHtml}
       </div>
       <div>
-        <div class="overview">${escapeHtml(movie.overview || "No overview available.")}</div>
-
         ${movie.vote_average ? `
-        <div class="sectionTitle">Rating</div>
+        <div class="sectionTitle" style="margin-top: 0;">Rating</div>
         <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
             <span style="font-size:16px; font-weight:600;">⭐ ${movie.vote_average.toFixed(1)}</span>
             <span style="color:#666; font-size:13px;">(${movie.vote_count || 0} votes)</span>
         </div>
+        <div id="user-rating-section" style="margin-top: 12px;"></div>
         ` : ''}
-        
+
+        <div class="overview" style="margin-top: ${movie.vote_average ? '16px' : '0'};">${escapeHtml(movie.overview || "No overview available.")}</div>
+
         ${movie.original_language || movie.production_countries ? `
         <div style="margin-top:8px; font-size:13px;">
             ${movie.original_language ? `
@@ -1516,13 +1567,6 @@ async function openMovieModal(movieId) {
         <div class="sectionTitle">Select which providers to include</div>
         <div>${providersHtml}</div>
         ` : ''}
-
-        <div id="user-section" style="margin-top: 20px; padding: 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; color: white;">
-          <div class="sectionTitle" style="color: white; margin-bottom: 12px;">My Activity</div>
-          <div id="user-actions">
-            <div class="subtle" style="color: rgba(255,255,255,0.8);">Loading...</div>
-          </div>
-        </div>
       </div>
 
       <div id="similar-movies-container" style="grid-column: 1 / -1; margin-top: 24px; border-top: 1px solid #eee; padding-top: 16px;">
@@ -1605,56 +1649,53 @@ async function openMovieModal(movieId) {
 }
 
 // Load user section with watchlist, rating, etc.
-async function loadUserSection(movieId, isTVShow = false) {
-  const userSection = document.getElementById("user-section");
-  const userActions = document.getElementById("user-actions");
-  if (!userSection || !userActions) return;
+async function loadUserSection(movieId, isTVShow = false, isBoardGame = false) {
+  const userRatingSection = document.getElementById("user-rating-section");
+  if (!userRatingSection) return;
 
-  const sessionId = localStorage.getItem("tmdb_session_id");
-  if (!sessionId) {
-    userSection.style.display = "none";
+  const userId = localStorage.getItem("user_id");
+  if (!userId) {
+    userRatingSection.style.display = "none";
     return;
   }
 
   try {
-    // Get account states
-    const mediaType = isTVShow ? 'tv' : 'movie';
-    const response = await fetch(`${TMDB_AUTH_API}?action=account_states&session_id=${sessionId}&media_type=${mediaType}&media_id=${movieId}`);
-    const accountStates = await response.json();
+    const contentType = isBoardGame ? 'boardgame' : (isTVShow ? 'tvshow' : 'movie');
+    const userData = await getUserData(contentType);
 
-    const isInWatchlist = accountStates.watchlist || false;
-    const userRating = accountStates.rated ? accountStates.rated.value : null;
+    // Check if user has rated this item in our database
+    const userRating = userData?.ratings?.[contentType]?.[movieId]?.rating || null;
 
-    userActions.innerHTML = `
-      <div style="display: flex; flex-direction: column; gap: 12px;">
-        <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="font-size: 20px;">${isInWatchlist ? '✓' : '+'}</span>
-            <span style="font-weight: 500;">${isInWatchlist ? 'In Watchlist' : 'Add to Watchlist'}</span>
+    // Check if item is in user's watchlist in our database
+    const isInWatchlist = userData?.lists?.[contentType]?.watchlist?.includes(String(movieId)) || false;
+
+    const contentLabel = isBoardGame ? "game" : (isTVShow ? "show" : "movie");
+    const listLabel = isBoardGame ? "Wishlist" : "Watchlist";
+
+    userRatingSection.innerHTML = `
+      <div style="padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; color: white;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+          <div style="font-weight: 600; font-size: 14px;">
+            ${userRating ? `Your Rating: ⭐ ${userRating.toFixed(1)}` : `Rate this ${contentLabel}`}
           </div>
-          <button id="toggle-watchlist-btn" style="background: rgba(255,255,255,0.25); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 6px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s;">
-            ${isInWatchlist ? 'Remove' : 'Add'}
+          <button id="toggle-watchlist-btn" style="background: rgba(255,255,255,0.25); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 4px 12px; border-radius: 16px; cursor: pointer; font-size: 12px; font-weight: 500;">
+            ${isInWatchlist ? `✓ ${listLabel}` : `+ ${listLabel}`}
           </button>
         </div>
 
-        <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px;">
-          <div style="font-weight: 500; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
-            <span>⭐</span>
-            <span>Your Rating: ${userRating ? userRating.toFixed(1) : 'Not rated'}</span>
-          </div>
-          <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-            ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(rating => `
-              <button class="rating-btn" data-rating="${rating}" style="background: ${userRating === rating ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.2)'}; border: 1px solid rgba(255,255,255,0.3); color: white; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s; min-width: 36px;">
-                ${rating}
-              </button>
-            `).join('')}
-          </div>
-          ${userRating ? `
-            <button id="delete-rating-btn" style="margin-top: 8px; background: rgba(220,38,38,0.3); border: 1px solid rgba(220,38,38,0.5); color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; width: 100%;">
-              Remove Rating
+        <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+          ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(rating => `
+            <button class="rating-btn" data-rating="${rating}" style="background: ${userRating === rating ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.2)'}; border: 1px solid ${userRating === rating ? 'rgba(255,215,0,0.8)' : 'rgba(255,255,255,0.3)'}; color: white; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s; min-width: 36px;">
+              ${rating}
             </button>
-          ` : ''}
+          `).join('')}
         </div>
+
+        ${userRating ? `
+          <button id="delete-rating-btn" style="margin-top: 8px; background: rgba(220,38,38,0.3); border: 1px solid rgba(220,38,38,0.5); color: white; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500; width: 100%;">
+            Remove Rating
+          </button>
+        ` : ''}
       </div>
     `;
 
@@ -1662,82 +1703,86 @@ async function loadUserSection(movieId, isTVShow = false) {
     const toggleWatchlistBtn = document.getElementById('toggle-watchlist-btn');
     if (toggleWatchlistBtn) {
       toggleWatchlistBtn.addEventListener('click', async () => {
-        await toggleWatchlist(movieId, isTVShow, !isInWatchlist);
+        await toggleWatchlist(movieId, isTVShow, !isInWatchlist, isBoardGame);
       });
     }
 
-    const ratingBtns = userActions.querySelectorAll('.rating-btn');
+    const ratingBtns = userRatingSection.querySelectorAll('.rating-btn');
     ratingBtns.forEach(btn => {
       btn.addEventListener('click', async () => {
         const rating = parseFloat(btn.dataset.rating);
-        await rateMedia(movieId, isTVShow, rating);
+        await rateMedia(movieId, isTVShow, rating, isBoardGame);
       });
     });
 
     const deleteRatingBtn = document.getElementById('delete-rating-btn');
     if (deleteRatingBtn) {
       deleteRatingBtn.addEventListener('click', async () => {
-        await deleteRating(movieId, isTVShow);
+        await deleteRating(movieId, isTVShow, isBoardGame);
       });
     }
 
   } catch (error) {
-    console.error("Error loading user section:", error);
-    userActions.innerHTML = `<div class="subtle" style="color: rgba(255,255,255,0.8);">Error loading user data</div>`;
+    console.error("[loadUserSection] Error:", error);
+    userRatingSection.innerHTML = `<div style="padding: 8px; background: #fee; border-radius: 6px; color: #c00; font-size: 12px;">Error loading user data</div>`;
   }
 }
 
 // Toggle watchlist
-async function toggleWatchlist(movieId, isTVShow, addToWatchlist) {
-  const sessionId = localStorage.getItem("tmdb_session_id");
-  if (!sessionId) return;
+async function toggleWatchlist(movieId, isTVShow, addToWatchlist, isBoardGame = false) {
+  const userId = localStorage.getItem("user_id");
+  if (!userId) return;
 
   try {
-    // Get account details for account ID
-    const accountResponse = await fetch(`${TMDB_AUTH_API}?action=get_account&session_id=${sessionId}`);
-    const account = await accountResponse.json();
+    const contentType = isBoardGame ? 'boardgame' : (isTVShow ? 'tvshow' : 'movie');
+    const listName = isBoardGame ? 'wishlist' : 'watchlist';
+    const action = addToWatchlist ? 'add_to_list' : 'remove_from_list';
 
-    const mediaType = isTVShow ? 'tv' : 'movie';
-    const response = await fetch(`${TMDB_AUTH_API}?action=add_to_watchlist`, {
+    const response = await fetch(`${USER_DATA_API}?action=${action}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        session_id: sessionId,
-        account_id: account.id,
-        media_type: mediaType,
-        media_id: movieId,
-        watchlist: addToWatchlist
+        user_id: userId,
+        item_id: String(movieId),
+        list_name: listName,
+        content_type: contentType
       })
     });
 
     const result = await response.json();
     if (result.success) {
       // Reload user section
-      loadUserSection(movieId, isTVShow);
-      showToast(addToWatchlist ? 'Added to watchlist' : 'Removed from watchlist');
+      loadUserSection(movieId, isTVShow, isBoardGame);
+      showToast(addToWatchlist ? `Added to ${listName}` : `Removed from ${listName}`);
     }
   } catch (error) {
     console.error("Error toggling watchlist:", error);
-    showToast('Error updating watchlist');
+    showToast('Error updating list');
   }
 }
 
 // Rate media
-async function rateMedia(movieId, isTVShow, rating) {
-  const sessionId = localStorage.getItem("tmdb_session_id");
-  if (!sessionId) return;
+async function rateMedia(movieId, isTVShow, rating, isBoardGame = false) {
+  const userId = localStorage.getItem("user_id");
+  if (!userId) return;
 
   try {
-    const mediaType = isTVShow ? 'tv' : 'movie';
-    const response = await fetch(`${TMDB_AUTH_API}?action=rate&session_id=${sessionId}&media_type=${mediaType}&media_id=${movieId}`, {
+    const contentType = isBoardGame ? 'boardgame' : (isTVShow ? 'tvshow' : 'movie');
+
+    const response = await fetch(`${USER_DATA_API}?action=rate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rating })
+      body: JSON.stringify({
+        user_id: userId,
+        item_id: String(movieId),
+        rating: rating,
+        content_type: contentType
+      })
     });
 
     const result = await response.json();
     if (result.success) {
-      loadUserSection(movieId, isTVShow);
+      loadUserSection(movieId, isTVShow, isBoardGame);
       showToast(`Rated ${rating}/10`);
     }
   } catch (error) {
@@ -1747,19 +1792,26 @@ async function rateMedia(movieId, isTVShow, rating) {
 }
 
 // Delete rating
-async function deleteRating(movieId, isTVShow) {
-  const sessionId = localStorage.getItem("tmdb_session_id");
-  if (!sessionId) return;
+async function deleteRating(movieId, isTVShow, isBoardGame = false) {
+  const userId = localStorage.getItem("user_id");
+  if (!userId) return;
 
   try {
-    const mediaType = isTVShow ? 'tv' : 'movie';
-    const response = await fetch(`${TMDB_AUTH_API}?action=delete_rating&session_id=${sessionId}&media_type=${mediaType}&media_id=${movieId}`, {
-      method: 'DELETE'
+    const contentType = isBoardGame ? 'boardgame' : (isTVShow ? 'tvshow' : 'movie');
+
+    const response = await fetch(`${USER_DATA_API}?action=delete_rating`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: userId,
+        item_id: String(movieId),
+        content_type: contentType
+      })
     });
 
     const result = await response.json();
     if (result.success) {
-      loadUserSection(movieId, isTVShow);
+      loadUserSection(movieId, isTVShow, isBoardGame);
       showToast('Rating removed');
     }
   } catch (error) {
