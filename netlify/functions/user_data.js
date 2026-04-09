@@ -78,7 +78,7 @@ export async function handler(event) {
 
       // Rate content (movie, TV show, or board game)
       case "rate": {
-        const { user_id, item_id, rating, review, content_type } = body;
+        const { user_id, item_id, rating, review, content_type, title, poster } = body;
 
         if (!user_id || !item_id || rating === undefined || !content_type) {
           return { statusCode: 400, body: JSON.stringify({ error: "Missing required fields" }) };
@@ -96,6 +96,14 @@ export async function handler(event) {
 
         if (review) {
           ratingData.review = review;
+        }
+        
+        if (title) {
+          ratingData.title = title;
+        }
+        
+        if (poster) {
+          ratingData.poster = poster;
         }
 
         const result = await usersCollection.updateOne(

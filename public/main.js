@@ -306,6 +306,7 @@ fetch("/autocomplete.json")
       .filter(name => !!name);
     genreSet = new Set(genres);
     genreList = Array.from(genreSet).sort((a, b) => a.localeCompare(b));
+    enableSearchIfReady();
   });
 
 // Load board game autocomplete data
@@ -317,10 +318,25 @@ fetch("/autocomplete-boardgames.json")
   .then(data => {
     boardgameAutocompleteData = data;
     console.log('[Autocomplete] Loaded', boardgameAutocompleteData.length, 'board games');
+    enableSearchIfReady();
   })
   .catch(err => {
     console.warn('[Autocomplete] Could not load board game data:', err);
+    enableSearchIfReady();
   });
+
+// Enable search input once autocomplete data is ready
+function enableSearchIfReady() {
+  const searchInput = document.getElementById('searchInput');
+  if (!searchInput) return;
+  
+  // Enable if we have movie data (covers movies and TV shows)
+  // For boardgames-only mode, we still wait for boardgame data
+  if (movieAutocompleteData.length > 0) {
+    searchInput.disabled = false;
+    console.log('[Autocomplete] Search input enabled');
+  }
+}
 
 // ==================== AUTOCOMPLETE FUNCTIONS ====================
 
@@ -675,6 +691,249 @@ if (btnLogin) {
 
 if (btnLogout) {
   btnLogout.addEventListener('click', logout);
+}
+
+// Watchlist button handler
+const watchlistBtn = document.getElementById('watchlist-btn');
+const watchlistModalOverlay = document.getElementById('watchlistModalOverlay');
+const watchlistModalClose = document.getElementById('watchlistModalClose');
+
+if (watchlistBtn) {
+  watchlistBtn.addEventListener('click', () => {
+    console.log('[watchlistBtn click] CLICKED');
+    console.log('[watchlistBtn click] watchlistModalOverlay exists:', !!watchlistModalOverlay);
+    if (watchlistModalOverlay) {
+      console.log('[watchlistBtn click] showing modal');
+      watchlistModalOverlay.style.display = 'flex';
+      console.log('[watchlistBtn click] calling loadWatchlistModal');
+      loadWatchlistModal();
+    }
+  });
+}
+
+if (watchlistModalClose) {
+  watchlistModalClose.addEventListener('click', closeWatchlistModal);
+}
+
+if (watchlistModalOverlay) {
+  watchlistModalOverlay.addEventListener('click', (e) => {
+    if (e.target === watchlistModalOverlay) {
+      closeWatchlistModal();
+    }
+  });
+}
+
+function closeWatchlistModal() {
+  const overlay = document.getElementById('watchlistModalOverlay');
+  if (overlay) {
+    overlay.style.display = 'none';
+  }
+}
+
+function loadWatchlistModal() {
+  console.log('[loadWatchlistModal] CALLED');
+  const userId = localStorage.getItem("user_id");
+  console.log('[loadWatchlistModal] userId from localStorage:', userId);
+  
+  const watchlistContent = document.getElementById('watchlist-content');
+  console.log('[loadWatchlistModal] watchlistContent element found:', !!watchlistContent);
+  
+  if (!watchlistContent) {
+    console.error('[loadWatchlistModal] watchlist-content element not found!');
+    return;
+  }
+  
+  if (!userId) {
+    console.warn('[loadWatchlistModal] No user ID, showing login prompt');
+    watchlistContent.innerHTML = '<p style="padding: 24px; text-align: center;">Please log in to view your watchlist.</p>';
+    return;
+  }
+  
+  // Fetch user data from API
+  console.log('[loadWatchlistModal] fetching user data from API');
+  getUserData().then(userData => {
+    console.log('[loadWatchlistModal] received userData from API:', userData);
+    
+    if (!userData) {
+      console.error('[loadWatchlistModal] Failed to fetch user data');
+      watchlistContent.innerHTML = '<p style="padding: 24px; text-align: center;">Error loading your lists.</p>';
+      return;
+    }
+    
+    // Extract watchlists and ratings from API response
+    // API structure: userData.lists = { movie: { watchlist, favorites }, tvshow: { watchlist, favorites }, boardgame: { wishlist, favorites } }
+    // API structure: userData.ratings = { movie: {}, tvshow: {}, boardgame: {} }
+    // API structure: userData.item_metadata = { movie: {itemId: {title, thumbnail}}, tvshow: {...}, boardgame: {...} }
+    
+    const watchlists = {
+      'movie': userData.lists?.movie?.watchlist || [],
+      'tvshow': userData.lists?.tvshow?.watchlist || [],
+      'boardgame': userData.lists?.boardgame?.wishlist || []
+    };
+    
+    const itemMetadata = userData.item_metadata || { movie: {}, tvshow: {}, boardgame: {} };
+    const ratingsData = userData.ratings || { movie: {}, tvshow: {}, boardgame: {} };
+    console.log('[loadWatchlistModal] extracted watchlists:', watchlists);
+    console.log('[loadWatchlistModal] extracted item_metadata:', itemMetadata);
+    console.log('[loadWatchlistModal] extracted ratings:', ratingsData);
+    
+    // Cache to localStorage
+    localStorage.setItem(`watchlists_${userId}`, JSON.stringify(watchlists));
+    localStorage.setItem(`ratings_${userId}`, JSON.stringify(ratingsData));
+    
+    // Setup tab click handlers
+    const tabButtons = document.querySelectorAll('#watchlist-modal .tab-button, #watchlist-tabs .tab-button');
+    console.log('[loadWatchlistModal] found tab buttons:', tabButtons.length);
+    
+    tabButtons.forEach((btn, idx) => {
+      console.log(`[loadWatchlistModal] setting up tab button ${idx}:`, btn.getAttribute('data-type'));
+      // Remove old listeners by cloning and replacing
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      
+      newBtn.addEventListener('click', () => {
+        const tabType = newBtn.getAttribute('data-type');
+        console.log('[loadWatchlistModal] tab clicked:', tabType, 'watchlists:', watchlists);
+        displayWatchlistContent(tabType, watchlists, ratingsData, itemMetadata);
+        
+        // Update active tab styling
+        document.querySelectorAll('#watchlist-modal .tab-button, #watchlist-tabs .tab-button').forEach(b => {
+          b.classList.toggle('active', b === newBtn);
+        });
+      });
+    });
+    
+    // Show movies by default
+    console.log('[loadWatchlistModal] showing movies by default');
+    displayWatchlistContent('movie', watchlists, ratingsData, itemMetadata);
+  }).catch(error => {
+    console.error('[loadWatchlistModal] Error fetching user data:', error);
+    watchlistContent.innerHTML = '<p style="padding: 24px; text-align: center;">Error loading your lists.</p>';
+  });
+}
+
+function displayWatchlistContent(tabType, watchlists, ratingsData, itemMetadata = {}) {
+  console.log('[displayWatchlistContent] CALLED with tabType:', tabType);
+  console.log('[displayWatchlistContent] watchlists:', watchlists);
+  console.log('[displayWatchlistContent] itemMetadata:', itemMetadata);
+  
+  const content = document.getElementById('watchlist-content');
+  console.log('[displayWatchlistContent] content element found:', !!content);
+  
+  if (!content) {
+    console.error('[displayWatchlistContent] watchlist-content element not found!');
+    return;
+  }
+  
+  let html = '';
+  
+  if (tabType === 'rated') {
+    console.log('[displayWatchlistContent] rendering ratings tab');
+    // Combine all ratings from all content types
+    const allRatings = [];
+    
+    // Get movie ratings
+    if (ratingsData.movie) {
+      Object.entries(ratingsData.movie).forEach(([itemId, ratingObj]) => {
+        allRatings.push({
+          id: itemId,
+          rating: ratingObj.rating,
+          title: ratingObj.title || 'Unknown Movie',
+          poster: ratingObj.poster || null,
+          type: 'movie',
+          contentType: 'Movie'
+        });
+      });
+    }
+    
+    // Get TV ratings
+    if (ratingsData.tvshow) {
+      Object.entries(ratingsData.tvshow).forEach(([itemId, ratingObj]) => {
+        allRatings.push({
+          id: itemId,
+          rating: ratingObj.rating,
+          title: ratingObj.title || 'Unknown Show',
+          poster: ratingObj.poster || null,
+          type: 'tvshow',
+          contentType: 'TV Show'
+        });
+      });
+    }
+    
+    // Get boardgame ratings
+    if (ratingsData.boardgame) {
+      Object.entries(ratingsData.boardgame).forEach(([itemId, ratingObj]) => {
+        allRatings.push({
+          id: itemId,
+          rating: ratingObj.rating,
+          title: ratingObj.title || 'Unknown Game',
+          poster: ratingObj.poster || null,
+          type: 'boardgame',
+          contentType: 'Board Game'
+        });
+      });
+    }
+    
+    console.log('[displayWatchlistContent] all rated items count:', allRatings.length);
+    
+    if (allRatings.length === 0) {
+      html = '<p style="padding: 24px; text-align: center; color: #cbd5e1;">No ratings yet.</p>';
+    } else {
+      html = '<div style="padding: 16px;">';
+      allRatings.forEach(item => {
+        console.log('[displayWatchlistContent] adding rated item:', item.id, item.title, item.rating);
+        const posterStyle = item.poster 
+          ? `background-image: url('${item.poster}'); background-size: cover; background-position: center;`
+          : `background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);`;
+        
+        html += `<div style="display: flex; gap: 12px; padding: 12px; border: 1px solid #475569; border-radius: 8px; margin-bottom: 12px; align-items: flex-start;">
+          <div style="width: 60px; height: 90px; min-width: 60px; border-radius: 4px; ${posterStyle}; border: 1px solid #64748b;"></div>
+          <div style="flex: 1;">
+            <strong style="display: block; margin-bottom: 4px;">${item.title}</strong>
+            <small style="color: #cbd5e1; display: block; margin-bottom: 8px;">${item.contentType}</small>
+            <div style="font-size: 18px;">⭐ ${item.rating.toFixed(1)}</div>
+          </div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+  } else {
+    console.log('[displayWatchlistContent] rendering items tab:', tabType);
+    let items = watchlists[tabType] || [];
+    let contentTypeLabel = tabType === 'movie' ? 'Movie' : (tabType === 'tvshow' ? 'TV Show' : 'Board Game');
+    
+    console.log('[displayWatchlistContent] items for', tabType, ':', items);
+    
+    if (items.length === 0) {
+      html = `<p style="padding: 24px; text-align: center; color: #cbd5e1;">No items in your watchlist.</p>`;
+    } else {
+      html = '<div style="padding: 16px;">';
+      items.forEach((itemId, idx) => {
+        const metadata = itemMetadata[tabType]?.[itemId] || {};
+        const title = metadata.title || 'Unknown';
+        const thumbnail = metadata.thumbnail || null;
+        
+        console.log('[displayWatchlistContent] item', idx, 'id:', itemId, 'title:', title, 'thumbnail:', thumbnail);
+        
+        const thumbnailStyle = thumbnail 
+          ? `background-image: url('${thumbnail}'); background-size: cover; background-position: center;`
+          : `background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);`;
+        
+        html += `<div style="display: flex; gap: 12px; padding: 12px; border: 1px solid #475569; border-radius: 8px; margin-bottom: 12px; align-items: flex-start;">
+          <div style="width: 60px; height: 90px; min-width: 60px; border-radius: 4px; ${thumbnailStyle}; border: 1px solid #64748b;"></div>
+          <div style="flex: 1;">
+            <strong style="display: block;">${title}</strong><br>
+            <small style="color: #cbd5e1;">${contentTypeLabel}</small>
+          </div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+  }
+  
+  console.log('[displayWatchlistContent] setting innerHTML, html length:', html.length);
+  content.innerHTML = html;
+  console.log('[displayWatchlistContent] innerHTML set successfully');
 }
 
 // BGG Login/Logout button handlers
@@ -1639,8 +1898,26 @@ async function openMovieModal(movieId, contentType = 'movie') {
     // Preload similar movies/shows
     loadSimilarMovies(movieId, isTVShow);
 
+    // Store movie data globally for rating functions
+    let posterUrl = null;
+    if (movie.poster_path) {
+      // TMDB poster path - construct full URL
+      posterUrl = `https://image.tmdb.org/t/p/w185${movie.poster_path}`;
+    } else if (movie.image) {
+      // Board game image - use as is
+      posterUrl = movie.image;
+    }
+    
+    window.currentModalMovie = {
+      movieId: movieId,
+      isTVShow: isTVShow,
+      isBoardGame: isBoardGame,
+      title: movie.title || movie.name || movie.name0 || 'Unknown',
+      poster: posterUrl
+    };
+
     // Load user section if logged in
-    loadUserSection(movieId, isTVShow);
+    loadUserSection(movieId, isTVShow, isBoardGame, movie);
   } catch (error) {
     console.error("Error opening modal:", error);
     modalTitle.textContent = "Error loading content";
@@ -1649,7 +1926,7 @@ async function openMovieModal(movieId, contentType = 'movie') {
 }
 
 // Load user section with watchlist, rating, etc.
-async function loadUserSection(movieId, isTVShow = false, isBoardGame = false) {
+async function loadUserSection(movieId, isTVShow = false, isBoardGame = false, movie = null) {
   const userRatingSection = document.getElementById("user-rating-section");
   if (!userRatingSection) return;
 
@@ -1667,7 +1944,8 @@ async function loadUserSection(movieId, isTVShow = false, isBoardGame = false) {
     const userRating = userData?.ratings?.[contentType]?.[movieId]?.rating || null;
 
     // Check if item is in user's watchlist in our database
-    const isInWatchlist = userData?.lists?.[contentType]?.watchlist?.includes(String(movieId)) || false;
+    const listName = isBoardGame ? 'wishlist' : 'watchlist';
+    const isInWatchlist = userData?.lists?.[contentType]?.[listName]?.includes(String(movieId)) || false;
 
     const contentLabel = isBoardGame ? "game" : (isTVShow ? "show" : "movie");
     const listLabel = isBoardGame ? "Wishlist" : "Watchlist";
@@ -1735,8 +2013,22 @@ async function toggleWatchlist(movieId, isTVShow, addToWatchlist, isBoardGame = 
 
   try {
     const contentType = isBoardGame ? 'boardgame' : (isTVShow ? 'tvshow' : 'movie');
-    const listName = isBoardGame ? 'wishlist' : 'watchlist';
+    const listName = isBoardGame ? 'wishlist' : 'watchlist'; // Use watchlist for all
     const action = addToWatchlist ? 'add_to_list' : 'remove_from_list';
+    
+    // Get title and thumbnail from current modal movie
+    let title = 'Unknown';
+    let thumbnail = null;
+    
+    if (window.currentModalMovie && window.currentModalMovie.movieId === movieId) {
+      title = window.currentModalMovie.title || 'Unknown';
+      thumbnail = window.currentModalMovie.poster || null;
+      console.log('[toggleWatchlist] Using modal movie data:', { title, thumbnail });
+    } else {
+      console.warn('[toggleWatchlist] No currentModalMovie data found for movieId:', movieId);
+    }
+
+    console.log('[toggleWatchlist] Adding to list - title:', title, 'thumbnail:', thumbnail);
 
     const response = await fetch(`${USER_DATA_API}?action=${action}`, {
       method: 'POST',
@@ -1745,11 +2037,15 @@ async function toggleWatchlist(movieId, isTVShow, addToWatchlist, isBoardGame = 
         user_id: userId,
         item_id: String(movieId),
         list_name: listName,
-        content_type: contentType
+        content_type: contentType,
+        title: title,
+        thumbnail: thumbnail
       })
     });
 
     const result = await response.json();
+    console.log('[toggleWatchlist] Response:', result);
+    
     if (result.success) {
       // Reload user section
       loadUserSection(movieId, isTVShow, isBoardGame);
@@ -1768,6 +2064,15 @@ async function rateMedia(movieId, isTVShow, rating, isBoardGame = false) {
 
   try {
     const contentType = isBoardGame ? 'boardgame' : (isTVShow ? 'tvshow' : 'movie');
+    
+    // Get title and poster from the current modal movie or API
+    let title = 'Unknown';
+    let poster = null;
+    
+    if (window.currentModalMovie && window.currentModalMovie.movieId === movieId) {
+      title = window.currentModalMovie.title;
+      poster = window.currentModalMovie.poster;
+    }
 
     const response = await fetch(`${USER_DATA_API}?action=rate`, {
       method: 'POST',
@@ -1776,7 +2081,9 @@ async function rateMedia(movieId, isTVShow, rating, isBoardGame = false) {
         user_id: userId,
         item_id: String(movieId),
         rating: rating,
-        content_type: contentType
+        content_type: contentType,
+        title: title,
+        poster: poster
       })
     });
 
