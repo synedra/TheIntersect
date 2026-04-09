@@ -128,7 +128,7 @@ export async function handler(event) {
   const action = qs.action;
   
   // Read settings from query parameters
-  const showSimilar  = qs.show_similar = "true";
+  const showSimilar = qs.show_similar === "true";
   
   // Client and db are now global
   
@@ -197,7 +197,7 @@ export async function handler(event) {
                      let query;
                      if (c.type === 'boardgame' && bggIds.length > 0) {
                        query = { _id: { $in: bggIds } };
-                     } else if (c.type === 'movie' && movieIds.length > 0) {
+                     } else if ((c.type === 'movie' || c.type === 'tv') && movieIds.length > 0) {
                        query = { _id: { $in: movieIds } };
                      } else {
                        continue;
@@ -328,6 +328,31 @@ export async function handler(event) {
         const finalFilter = filterConditions.length > 0 ? { $and: filterConditions } : {};
         
         let searchResults;
+
+        // PRIORITY #1.5: Cast/Person Search
+        // If personList has items and no query text, search by cast
+        if (personList.length > 0 && (!query || query.length < 2)) {
+             let castResults = [];
+             for(const c of collections) {
+                 if (c.type === 'boardgame') continue; // Board games don't have cast
+                 
+                 try {
+                     const coll = getCollection(c);
+                     // Search for movies/TV with ANY of the people in the cast array
+                     const query = { cast: { $in: personList } };
+                     const docs = await coll.find(query, { limit }).toArray();
+                     docs.forEach(d => { d.content_type = c.type; castResults.push(d); });
+                 } catch(e){
+                     console.error(`Error searching cast for ${c.name}:`, e);
+                 }
+             }
+             
+             if (castResults.length > 0) {
+                 // Sort by popularity
+                 castResults.sort((a, b) => (Number(b.popularity) || 0) - (Number(a.popularity) || 0));
+                 return { statusCode: 200, body: JSON.stringify({ results: castResults.map(r => ({...r, id: r._id})) }) };
+             }
+        }
 
         if (query && query.length >= 2) {
              

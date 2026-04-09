@@ -334,6 +334,8 @@ function enableSearchIfReady() {
   // For boardgames-only mode, we still wait for boardgame data
   if (movieAutocompleteData.length > 0) {
     searchInput.disabled = false;
+    searchInput.placeholder = 'Search movies, actors, genres…';
+    searchInput.title = '';
     console.log('[Autocomplete] Search input enabled');
   }
 }
@@ -825,111 +827,77 @@ function displayWatchlistContent(tabType, watchlists, ratingsData, itemMetadata 
     return;
   }
   
-  let html = '';
+  let html = '<div style="padding: 16px;">';
+  let contentTypeLabel = tabType === 'movie' ? 'Movie' : (tabType === 'tvshow' ? 'TV Show' : 'Board Game');
+  let items = watchlists[tabType] || [];
   
-  if (tabType === 'rated') {
-    console.log('[displayWatchlistContent] rendering ratings tab');
-    // Combine all ratings from all content types
-    const allRatings = [];
-    
-    // Get movie ratings
-    if (ratingsData.movie) {
-      Object.entries(ratingsData.movie).forEach(([itemId, ratingObj]) => {
-        allRatings.push({
-          id: itemId,
-          rating: ratingObj.rating,
-          title: ratingObj.title || 'Unknown Movie',
-          poster: ratingObj.poster || null,
-          type: 'movie',
-          contentType: 'Movie'
-        });
-      });
-    }
-    
-    // Get TV ratings
-    if (ratingsData.tvshow) {
-      Object.entries(ratingsData.tvshow).forEach(([itemId, ratingObj]) => {
-        allRatings.push({
-          id: itemId,
-          rating: ratingObj.rating,
-          title: ratingObj.title || 'Unknown Show',
-          poster: ratingObj.poster || null,
-          type: 'tvshow',
-          contentType: 'TV Show'
-        });
-      });
-    }
-    
-    // Get boardgame ratings
-    if (ratingsData.boardgame) {
-      Object.entries(ratingsData.boardgame).forEach(([itemId, ratingObj]) => {
-        allRatings.push({
-          id: itemId,
-          rating: ratingObj.rating,
-          title: ratingObj.title || 'Unknown Game',
-          poster: ratingObj.poster || null,
-          type: 'boardgame',
-          contentType: 'Board Game'
-        });
-      });
-    }
-    
-    console.log('[displayWatchlistContent] all rated items count:', allRatings.length);
-    
-    if (allRatings.length === 0) {
-      html = '<p style="padding: 24px; text-align: center; color: #cbd5e1;">No ratings yet.</p>';
-    } else {
-      html = '<div style="padding: 16px;">';
-      allRatings.forEach(item => {
-        console.log('[displayWatchlistContent] adding rated item:', item.id, item.title, item.rating);
-        const posterStyle = item.poster 
-          ? `background-image: url('${item.poster}'); background-size: cover; background-position: center;`
-          : `background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);`;
-        
-        html += `<div style="display: flex; gap: 12px; padding: 12px; border: 1px solid #475569; border-radius: 8px; margin-bottom: 12px; align-items: flex-start;">
-          <div style="width: 60px; height: 90px; min-width: 60px; border-radius: 4px; ${posterStyle}; border: 1px solid #64748b;"></div>
-          <div style="flex: 1;">
-            <strong style="display: block; margin-bottom: 4px;">${item.title}</strong>
-            <small style="color: #cbd5e1; display: block; margin-bottom: 8px;">${item.contentType}</small>
-            <div style="font-size: 18px;">⭐ ${item.rating.toFixed(1)}</div>
-          </div>
-        </div>`;
-      });
-      html += '</div>';
-    }
+  // WATCHLIST SECTION
+  console.log('[displayWatchlistContent] rendering watchlist for tabType:', tabType);
+  console.log('[displayWatchlistContent] items for', tabType, ':', items);
+  
+  if (items.length === 0) {
+    html += `<p style="padding: 12px; text-align: center; color: #cbd5e1;">No items in your watchlist.</p>`;
   } else {
-    console.log('[displayWatchlistContent] rendering items tab:', tabType);
-    let items = watchlists[tabType] || [];
-    let contentTypeLabel = tabType === 'movie' ? 'Movie' : (tabType === 'tvshow' ? 'TV Show' : 'Board Game');
-    
-    console.log('[displayWatchlistContent] items for', tabType, ':', items);
-    
-    if (items.length === 0) {
-      html = `<p style="padding: 24px; text-align: center; color: #cbd5e1;">No items in your watchlist.</p>`;
-    } else {
-      html = '<div style="padding: 16px;">';
-      items.forEach((itemId, idx) => {
-        const metadata = itemMetadata[tabType]?.[itemId] || {};
-        const title = metadata.title || 'Unknown';
-        const thumbnail = metadata.thumbnail || null;
-        
-        console.log('[displayWatchlistContent] item', idx, 'id:', itemId, 'title:', title, 'thumbnail:', thumbnail);
-        
-        const thumbnailStyle = thumbnail 
-          ? `background-image: url('${thumbnail}'); background-size: cover; background-position: center;`
-          : `background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);`;
-        
-        html += `<div style="display: flex; gap: 12px; padding: 12px; border: 1px solid #475569; border-radius: 8px; margin-bottom: 12px; align-items: flex-start;">
-          <div style="width: 60px; height: 90px; min-width: 60px; border-radius: 4px; ${thumbnailStyle}; border: 1px solid #64748b;"></div>
-          <div style="flex: 1;">
-            <strong style="display: block;">${title}</strong><br>
-            <small style="color: #cbd5e1;">${contentTypeLabel}</small>
-          </div>
-        </div>`;
-      });
-      html += '</div>';
-    }
+    html += '<h3 style="margin: 0 0 12px 0; color: #e2e8f0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Watchlist</h3>';
+    items.forEach((itemId, idx) => {
+      const metadata = itemMetadata[tabType]?.[itemId] || {};
+      const title = metadata.title || 'Unknown';
+      const thumbnail = metadata.thumbnail || null;
+      
+      console.log('[displayWatchlistContent] item', idx, 'id:', itemId, 'title:', title, 'thumbnail:', thumbnail);
+      
+      const thumbnailStyle = thumbnail 
+        ? `background-image: url('${thumbnail}'); background-size: cover; background-position: center;`
+        : `background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);`;
+      
+      html += `<div style="display: flex; gap: 12px; padding: 12px; border: 1px solid #475569; border-radius: 8px; margin-bottom: 12px; align-items: flex-start;">
+        <div style="width: 60px; height: 90px; min-width: 60px; border-radius: 4px; ${thumbnailStyle}; border: 1px solid #64748b;"></div>
+        <div style="flex: 1;">
+          <strong style="display: block;">${title}</strong><br>
+          <small style="color: #cbd5e1;">${contentTypeLabel}</small>
+        </div>
+      </div>`;
+    });
   }
+  
+  // RATED SECTION
+  console.log('[displayWatchlistContent] rendering rated items for tabType:', tabType);
+  const ratedItems = [];
+  
+  if (ratingsData[tabType]) {
+    Object.entries(ratingsData[tabType]).forEach(([itemId, ratingObj]) => {
+      ratedItems.push({
+        id: itemId,
+        rating: ratingObj.rating,
+        title: ratingObj.title || 'Unknown',
+        poster: ratingObj.poster || null
+      });
+    });
+  }
+  
+  console.log('[displayWatchlistContent] rated items for', tabType, ':', ratedItems.length);
+  
+  if (ratedItems.length === 0) {
+    html += `<p style="padding: 12px; text-align: center; color: #cbd5e1;">No ratings yet.</p>`;
+  } else {
+    html += '<h3 style="margin: 24px 0 12px 0; color: #e2e8f0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Rated</h3>';
+    ratedItems.forEach(item => {
+      console.log('[displayWatchlistContent] adding rated item:', item.id, item.title, item.rating);
+      const posterStyle = item.poster 
+        ? `background-image: url('${item.poster}'); background-size: cover; background-position: center;`
+        : `background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);`;
+      
+      html += `<div style="display: flex; gap: 12px; padding: 12px; border: 1px solid #475569; border-radius: 8px; margin-bottom: 12px; align-items: flex-start;">
+        <div style="width: 60px; height: 90px; min-width: 60px; border-radius: 4px; ${posterStyle}; border: 1px solid #64748b;"></div>
+        <div style="flex: 1;">
+          <strong style="display: block; margin-bottom: 4px;">${item.title}</strong>
+          <div style="font-size: 18px;">⭐ ${item.rating.toFixed(1)}</div>
+        </div>
+      </div>`;
+    });
+  }
+  
+  html += '</div>';
   
   console.log('[displayWatchlistContent] setting innerHTML, html length:', html.length);
   content.innerHTML = html;
@@ -1220,18 +1188,74 @@ async function loadPage(page = 1) {
     // Movies and/or TV Shows (can be both)
     let movieResults = [];
     let tvResults = [];
-    // Movies
-    if (searchMode.movies) {
-      const params = { sort: "popularity", sort_order: "desc", content_types: "movies" };
-      const dataMovies = await astraApi("discover", params);
-      if (dataMovies && dataMovies.results) movieResults = dataMovies.results;
+    
+    // Check if there's a specific movie/show ID filter (from autocomplete)
+    const movieIdFilter = selectedFilters.find(f => f.type === 'movie_id');
+    
+    if (movieIdFilter) {
+      // Use search with specific ID
+      if (searchMode.movies) {
+        const params = { movie_id: movieIdFilter.id, content_types: "movies" };
+        const dataMovies = await astraApi("search", params);
+        if (dataMovies && dataMovies.results) movieResults = dataMovies.results;
+      }
+      if (searchMode.tvshows) {
+        const params = { movie_id: movieIdFilter.id, content_types: "tvshows" };
+        const dataTV = await astraApi("search", params);
+        if (dataTV && dataTV.results) tvResults = dataTV.results;
+      }
+    } else {
+      // Check for other filters (person, genre, etc) that should use search
+      const personFilters = selectedFilters.filter(f => f.type === 'person');
+      const genreFilters = selectedFilters.filter(f => f.type === 'genre');
+      const keywordFilters = selectedFilters.filter(f => f.type === 'keyword');
+      const hasFilters = personFilters.length > 0 || genreFilters.length > 0 || keywordFilters.length > 0;
+      
+      if (hasFilters) {
+        // Use search with filter parameters
+        if (searchMode.movies) {
+          const params = { content_types: "movies" };
+          if (personFilters.length > 0) {
+            params.person = personFilters.map(f => f.id).join(',');
+          }
+          if (genreFilters.length > 0) {
+            params.genre = genreFilters.map(f => f.id).join(',');
+          }
+          if (keywordFilters.length > 0) {
+            params.keywords = keywordFilters.map(f => f.name).join(',');
+          }
+          const dataMovies = await astraApi("search", params);
+          if (dataMovies && dataMovies.results) movieResults = dataMovies.results;
+        }
+        if (searchMode.tvshows) {
+          const params = { content_types: "tvshows" };
+          if (personFilters.length > 0) {
+            params.person = personFilters.map(f => f.id).join(',');
+          }
+          if (genreFilters.length > 0) {
+            params.genre = genreFilters.map(f => f.id).join(',');
+          }
+          if (keywordFilters.length > 0) {
+            params.keywords = keywordFilters.map(f => f.name).join(',');
+          }
+          const dataTV = await astraApi("search", params);
+          if (dataTV && dataTV.results) tvResults = dataTV.results;
+        }
+      } else {
+        // Use discover for browsing (no filters)
+        if (searchMode.movies) {
+          const params = { sort: "popularity", sort_order: "desc", content_types: "movies" };
+          const dataMovies = await astraApi("discover", params);
+          if (dataMovies && dataMovies.results) movieResults = dataMovies.results;
+        }
+        if (searchMode.tvshows) {
+          const params = { sort: "popularity", sort_order: "desc", content_types: "tvshows" };
+          const dataTV = await astraApi("discover", params);
+          if (dataTV && dataTV.results) tvResults = dataTV.results;
+        }
+      }
     }
-    // TV Shows
-    if (searchMode.tvshows) {
-      const params = { sort: "popularity", sort_order: "desc", content_types: "tvshows" };
-      const dataTV = await astraApi("discover", params);
-      if (dataTV && dataTV.results) tvResults = dataTV.results;
-    }
+    
     results = [...movieResults, ...tvResults];
     // Sort by popularity (descending), fallback to 0 if missing
     results.sort((a, b) => {
@@ -1653,6 +1677,16 @@ async function openMovieModal(movieId, contentType = 'movie') {
         });
       });
 
+      // Store board game data globally for rating functions
+      window.currentModalMovie = {
+        movieId: movieId,
+        isTVShow: false,
+        isBoardGame: true,
+        title: movie.name || movie.name0 || 'Unknown',
+        poster: movie.thumbnail || movie.image || null
+      };
+      console.log('[OpenModal] SET window.currentModalMovie for boardgame:', window.currentModalMovie);
+
       loadSimilarBoardGames(movieId);
       loadUserSection(movieId, false, true); // movieId, isTVShow=false, isBoardGame=true
 
@@ -1912,10 +1946,8 @@ async function openMovieModal(movieId, contentType = 'movie') {
     // Store movie data globally for rating functions
     let posterUrl = null;
     if (movie.poster_path) {
-      // TMDB poster path - construct full URL
       posterUrl = `https://image.tmdb.org/t/p/w185${movie.poster_path}`;
     } else if (movie.image) {
-      // Board game image - use as is
       posterUrl = movie.image;
     }
     
@@ -1923,12 +1955,13 @@ async function openMovieModal(movieId, contentType = 'movie') {
       movieId: movieId,
       isTVShow: isTVShow,
       isBoardGame: isBoardGame,
-      title: movie.title || movie.name || movie.name0 || 'Unknown',
-      poster: posterUrl
+      title: isBoardGame ? (movie.name || movie.name0 || 'Unknown') : (movie.title || movie.name || 'Unknown'),
+      poster: isBoardGame ? (movie.thumbnail || movie.image || null) : posterUrl
     };
+    console.log('[OpenModal] SET window.currentModalMovie:', window.currentModalMovie);
 
     // Load user section if logged in
-    loadUserSection(movieId, isTVShow, isBoardGame, movie);
+    loadUserSection(movieId, isTVShow, false);
   } catch (error) {
     console.error("Error opening modal:", error);
     modalTitle.textContent = "Error loading content";
@@ -2080,10 +2113,18 @@ async function rateMedia(movieId, isTVShow, rating, isBoardGame = false) {
     let title = 'Unknown';
     let poster = null;
     
-    if (window.currentModalMovie && window.currentModalMovie.movieId === movieId) {
+    console.log('[rateMedia] movieId:', movieId, 'currentModalMovie.movieId:', window.currentModalMovie?.movieId);
+    console.log('[rateMedia] currentModalMovie:', window.currentModalMovie);
+    
+    if (window.currentModalMovie && String(window.currentModalMovie.movieId) === String(movieId)) {
       title = window.currentModalMovie.title;
       poster = window.currentModalMovie.poster;
+      console.log('[rateMedia] Using currentModalMovie - title:', title, 'poster:', poster);
+    } else {
+      console.log('[rateMedia] currentModalMovie mismatch or not set!');
     }
+
+    console.log('[rateMedia] Sending: title=', title, 'poster=', poster);
 
     const response = await fetch(`${USER_DATA_API}?action=rate`, {
       method: 'POST',
