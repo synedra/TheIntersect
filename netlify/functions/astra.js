@@ -333,21 +333,22 @@ export async function handler(event) {
              
              // PRIORITY #2: Exact Title Match (Text Search)
              // User request: "Don't do a similar search if you have an exact match."
+             // Note: Board games are only searched by _id from autocomplete (PRIORITY #1)
              let exactMatches = [];
              for(const c of collections) {
+                 // Skip board games - they're handled by _id search in PRIORITY #1
+                 if (c.type === 'boardgame') continue;
+                 
                  try {
                      const coll = getCollection(c);
                      let field;
-                     if (c.type === 'boardgame') {
-                         // Board games use name0 (and it's not lowercased in the DB)
-                         field = 'name0';
-                     } else if (c.type === 'movie') {
+                     if (c.type === 'movie') {
                          field = 'title_lower';
                      } else {
                          field = 'name_lower';
                      }
                      
-                     const searchQuery = c.type === 'boardgame' ? query : query.toLowerCase();
+                     const searchQuery = query.toLowerCase();
                      const exacts = await coll.find({ ...finalFilter, [field]: searchQuery }, { limit: 20 }).toArray();
                      exacts.forEach(e => { e.content_type = c.type; exactMatches.push(e); });
                  } catch(e){

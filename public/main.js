@@ -1198,9 +1198,20 @@ async function loadPage(page = 1) {
 
     // --- FIX: Only one of boardgames or (movies/tvshows) can be enabled ---
     if (searchMode.boardgames) {
-      const params = { sort: "usersrated", sort_order: "desc", content_types: "boardgames" };
-      const dataBG = await astraApi("discover", params);
-      results = (dataBG && dataBG.results) ? dataBG.results.filter(game => game.year) : [];
+      // Check if there's a specific boardgame ID filter (from autocomplete)
+      const movieIdFilter = selectedFilters.find(f => f.type === 'movie_id');
+      
+      if (movieIdFilter) {
+        // Use search with specific ID
+        const params = { bgg_id: movieIdFilter.id, content_types: "boardgames" };
+        const dataBG = await astraApi("search", params);
+        results = (dataBG && dataBG.results) ? dataBG.results : [];
+      } else {
+        // Use discover for browsing
+        const params = { sort: "usersrated", sort_order: "desc", content_types: "boardgames" };
+        const dataBG = await astraApi("discover", params);
+        results = (dataBG && dataBG.results) ? dataBG.results.filter(game => game.year) : [];
+      }
       renderGrid(results);
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
