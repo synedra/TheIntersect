@@ -1390,7 +1390,7 @@ async function openMovieModal(movieId, contentType = 'movie') {
     }
 
     // For movies/TV: always use movie.name or movie.title directly
-    const isTVShow = movie.content_type === 'tv';
+    const isTVShow = movie.content_type === 'tv' || movie.content_type === 'tvshow';
 
     modalTitle.textContent = movie.name || movie.title || (isTVShow ? "TV Show" : "Movie");
 
