@@ -160,10 +160,10 @@ def update_item(media_type, item_id):
         
         # 1. Cast
         credits = data.get('credits', {})
-        # Map to both 'cast' and 'cast_details' to be safe for different frontend versions
+        # Extract cast as a flat array of actor names for easier querying
         if 'cast' in credits:
-            data['cast'] = credits['cast']
-            data['cast_details'] = credits['cast'] # Frontend often looks here
+            data['cast'] = [actor.get('name') for actor in credits['cast'] if actor.get('name')]
+            data['cast_details'] = credits['cast'] # Frontend often looks here for full details
         if 'crew' in credits:
             data['crew'] = credits['crew']
 

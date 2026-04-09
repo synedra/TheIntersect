@@ -152,6 +152,7 @@ export async function handler(event) {
 
         // Hoist variable declarations for cache checking
         const movieIds = getList(qs.movie_id);
+        const bggIds = getList(qs.bgg_id).map(id => `bgg_${id}`);
         const personList = getList(qs.person);
         const genreList = getList(qs.genre);
         const keywordList = getList(qs.keywords);
@@ -186,14 +187,22 @@ export async function handler(event) {
             }
         }
 
-        // PRIORITY #1: Exact Movie/Show ID Match (from Autocomplete)
-        // User request: "If a movie is selected, it should be the only result... search is essentially just 'Stranger than Fiction'."
-        // (movieIds already parsed above)
-        if (movieIds.length > 0) {
+        // PRIORITY #1: Exact Movie/Show/Boardgame ID Match (from Autocomplete)
+        // User request: "If a movie or boardgame is selected, it should be the only result."
+        // (movieIds and bggIds already parsed above)
+        if (movieIds.length > 0 || bggIds.length > 0) {
              const results = [];
              for(const c of collections) {
                  try {
-                     const docs = await getCollection(c).find({ _id: { $in: movieIds } }).toArray();
+                     let query;
+                     if (c.type === 'boardgame' && bggIds.length > 0) {
+                       query = { _id: { $in: bggIds } };
+                     } else if (c.type === 'movie' && movieIds.length > 0) {
+                       query = { _id: { $in: movieIds } };
+                     } else {
+                       continue;
+                     }
+                     const docs = await getCollection(c).find(query).toArray();
                      docs.forEach(d => { d.content_type = c.type; results.push(d); });
                  } catch(e){}
              }

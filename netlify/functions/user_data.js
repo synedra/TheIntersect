@@ -67,7 +67,8 @@ export async function handler(event) {
             body: JSON.stringify({
               user_id: userId,
               ratings: { [contentType]: userData.ratings[contentType] || {} },
-              lists: { [contentType]: userData.lists[contentType] || {} }
+              lists: { [contentType]: userData.lists[contentType] || {} },
+              item_metadata: { [contentType]: userData.item_metadata?.[contentType] || {} }
             })
           };
         }
@@ -149,16 +150,27 @@ export async function handler(event) {
           return { statusCode: 400, body: JSON.stringify({ error: `Invalid list_name for ${content_type}` }) };
         }
 
+        // Store metadata about the item for later display
+        const itemMetadata = {
+          title: body.title || '',
+          thumbnail: body.thumbnail || '',
+          description: body.description || '',
+          added_at: new Date().toISOString()
+        };
+
         await usersCollection.updateOne(
           { _id: user_id },
           {
             $addToSet: { [`lists.${content_type}.${list_name}`]: String(item_id) },
-            $set: { updated_at: new Date().toISOString() }
+            $set: { 
+              [`item_metadata.${content_type}.${item_id}`]: itemMetadata,
+              updated_at: new Date().toISOString()
+            }
           },
           { upsert: true }
         );
 
-        return { statusCode: 200, body: JSON.stringify({ success: true }) };
+        return { statusCode: 200, body: JSON.stringify({ success: true, metadata: itemMetadata }) };
       }
 
       // Remove item from list

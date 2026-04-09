@@ -909,7 +909,9 @@ function renderGrid(movies) {
           openMovieModal(itemId, 'boardgame', 'bgg_board_games');
         } else {
           const itemId = item.id || item._id;
-          openMovieModal(itemId);
+          // Pass content_type so openMovieModal knows if it's a TV show
+          const contentType = item.content_type;
+          openMovieModal(itemId, contentType);
         }
       }
     });
@@ -979,18 +981,20 @@ async function loadPage(page = 1) {
   }
 }
 
-async function openMovieModal(movieId) {
+async function openMovieModal(movieId, contentType) {
   openModal();
   modalTitle.textContent = "Loading…";
   modalSubtitle.textContent = "";
   modalBody.innerHTML = "";
 
   try {
-    console.log('[OpenModal] Fetching details for:', movieId, 'contentMode:', contentMode);
-    // Accept type/collection for board games
+    console.log('[OpenModal] Fetching details for:', movieId, 'contentType:', contentType);
+    // Accept type/collection for board games and TV shows
     let data;
-    if (arguments.length > 1 && arguments[1] === 'boardgame') {
+    if (contentType === 'boardgame') {
       data = await astraApi("details", { id: movieId, type: 'boardgame', collection: 'bgg_board_games' });
+    } else if (contentType === 'tvshow' || contentType === 'tv') {
+      data = await astraApi("details", { id: movieId, type: 'tvshow' });
     } else if (searchMode.boardgames || contentMode === 'boardgames') {
       data = await astraApi("details", { id: movieId, type: 'boardgame', collection: 'bgg_board_games' });
     } else {
@@ -1014,7 +1018,7 @@ async function openMovieModal(movieId) {
       return;
     }
 
-    const isBoardGame = searchMode.boardgames || (arguments.length > 1 && arguments[1] === 'boardgame') || movie.name0 !== undefined || movie.bggid !== undefined;
+    const isBoardGame = searchMode.boardgames || (contentType === 'boardgame') || movie.name0 !== undefined || movie.bggid !== undefined;
 
     if (isBoardGame) {
       console.log('[BoardGame Modal] Full movie object:', movie);
