@@ -489,6 +489,23 @@ export async function handler(event) {
              return { statusCode: 404, body: JSON.stringify({ error: "Board game not found" }) };
          }
          
+         // If type is tvshow, prioritize tvshows collection
+         if (itemType === 'tvshow' || itemType === 'tv') {
+             try {
+                const collection = getCollection({ name: 'tvshows2026', type: 'tv' });
+                console.log(`[Details] Looking up TV show with _id: ${itemId}`);
+                const item = await collection.findOne({ _id: itemId });
+                if(item) {
+                    console.log(`[Details] Found TV show:`, item.name);
+                    item.content_type = 'tvshow';
+                    return { statusCode: 200, body: JSON.stringify({ results: [ { ...item, id: item._id } ] }) };
+                }
+                console.log(`[Details] TV show not found for id: ${itemId}`);
+             } catch (e) {
+                 console.warn(`Error finding TV show ${itemId}:`, e);
+             }
+         }
+         
          for(const c of lookupCollections) {
              try {
                 const collection = getCollection(c);

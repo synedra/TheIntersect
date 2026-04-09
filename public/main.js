@@ -906,11 +906,10 @@ function renderGrid(movies) {
       if (item) {
         if (searchMode.boardgames) {
           const itemId = item.bggid || item.bgg_id;
-          openMovieModal(itemId, 'boardgame', 'bgg_board_games');
+          openMovieModal(itemId, 'boardgame');
         } else {
           const itemId = item.id || item._id;
-          // Pass content_type so openMovieModal knows if it's a TV show
-          const contentType = item.content_type;
+          const contentType = item.content_type === 'tvshow' || item.content_type === 'tv' ? 'tvshow' : 'movie';
           openMovieModal(itemId, contentType);
         }
       }
@@ -981,7 +980,7 @@ async function loadPage(page = 1) {
   }
 }
 
-async function openMovieModal(movieId, contentType) {
+async function openMovieModal(movieId, contentType = 'movie') {
   openModal();
   modalTitle.textContent = "Loading…";
   modalSubtitle.textContent = "";
@@ -989,16 +988,13 @@ async function openMovieModal(movieId, contentType) {
 
   try {
     console.log('[OpenModal] Fetching details for:', movieId, 'contentType:', contentType);
-    // Accept type/collection for board games and TV shows
     let data;
     if (contentType === 'boardgame') {
-      data = await astraApi("details", { id: movieId, type: 'boardgame', collection: 'bgg_board_games' });
+      data = await astraApi("details", { id: movieId, type: 'boardgame' });
     } else if (contentType === 'tvshow' || contentType === 'tv') {
       data = await astraApi("details", { id: movieId, type: 'tvshow' });
-    } else if (searchMode.boardgames || contentMode === 'boardgames') {
-      data = await astraApi("details", { id: movieId, type: 'boardgame', collection: 'bgg_board_games' });
     } else {
-      data = await astraApi("details", { id: movieId });
+      data = await astraApi("details", { id: movieId, type: 'movie' });
     }
     console.log('[OpenModal] Received data:', data);
 
@@ -1018,7 +1014,7 @@ async function openMovieModal(movieId, contentType) {
       return;
     }
 
-    const isBoardGame = searchMode.boardgames || (contentType === 'boardgame') || movie.name0 !== undefined || movie.bggid !== undefined;
+    const isBoardGame = contentType === 'boardgame' || movie.name0 !== undefined || movie.bggid !== undefined;
 
     if (isBoardGame) {
       console.log('[BoardGame Modal] Full movie object:', movie);
