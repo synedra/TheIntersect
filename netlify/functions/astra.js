@@ -599,7 +599,7 @@ export async function handler(event) {
               results = results.map(r => ({ ...r, id: r.bggid || r._id }));
 
               // Sort in memory by usersrated descending (most popular first)
-              results.sort((a, b) => (b.usersrated || 0) - (a.usersrated || 0));
+              results.sort((a, b) => (b.boardgamerank || 0) - (a.boardgamerank || 0));
             } else if (collInfo.type === 'tv') {
               // TV shows: Query without sort to avoid timeout (no index on popularity), then sort in memory
               const tvFilter = {
