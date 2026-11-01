@@ -7,41 +7,252 @@
   <title>Movie App - Astra DB</title>
 
   <style>
+    :root {
+      --bg-0: #0f131a;
+      --bg-1: #141a22;
+      --bg-2: #1b2430;
+      --surface-1: rgba(36, 46, 60, 0.54);
+      --surface-2: rgba(33, 43, 56, 0.52);
+      --surface-3: rgba(79, 89, 104, 0.42);
+      --border-soft: rgba(255, 255, 255, 0.14);
+      --text-main: #f5f7fb;
+      --text-muted: #c0c8d6;
+      --accent: #0a84ff;
+      --shadow-soft: 0 8px 22px rgba(0, 0, 0, 0.26);
+      --shadow-strong: 0 14px 32px rgba(0, 0, 0, 0.34);
+    }
+
     body {
       margin: 0;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       -webkit-font-smoothing: antialiased;
-      background: #0f172a;
-      color: #e2e8f0;
+      -moz-osx-font-smoothing: grayscale;
+      background:
+        radial-gradient(920px 540px at 82% -8%, rgba(10, 132, 255, 0.14), transparent 66%),
+        radial-gradient(860px 520px at 8% 100%, rgba(94, 92, 230, 0.08), transparent 64%),
+        linear-gradient(165deg, var(--bg-0), var(--bg-1) 58%, var(--bg-2) 100%);
+      color: var(--text-main);
+      letter-spacing: -0.01em;
     }
 
     .app {
       display: grid;
       grid-template-columns: 320px 1fr;
       min-height: 100vh;
+      max-width: 1600px;
+      margin: 0 auto;
+      gap: 14px;
+      padding: 14px;
+      box-sizing: border-box;
+    }
+
+    .app.sidebar-collapsed {
+      grid-template-columns: 1fr;
+    }
+
+    .app.sidebar-collapsed .sidebar {
+      display: none;
     }
 
     .sidebar {
       padding: 16px;
-      border-right: 1px solid #334155;
-      background: #1e293b;
+      border: 1px solid var(--border-soft);
+      background: linear-gradient(180deg, var(--surface-2), rgba(28, 36, 48, 0.48));
+      border-radius: 18px;
       height: 100vh;
       overflow-y: auto;
       position: sticky;
       top: 0;
       box-sizing: border-box;
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(24px) saturate(112%);
     }
 
     .main {
       padding: 16px;
-      background: #0f172a;
+      background: linear-gradient(180deg, rgba(33, 43, 57, 0.48), rgba(27, 36, 48, 0.44));
+      border: 1px solid var(--border-soft);
+      border-radius: 18px;
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(24px) saturate(112%);
+    }
+
+    .mainHeader {
+      position: sticky;
+      top: 0;
+      z-index: 110;
+      margin: -6px -6px 14px -6px;
+      padding: 10px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(43, 54, 70, 0.54), rgba(34, 44, 59, 0.44));
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(24px) saturate(112%);
+    }
+
+    .headerOneRow {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .headerTitle {
+      margin: 0;
+      font-size: clamp(22px, 2.2vw, 32px);
+      letter-spacing: -0.02em;
+      font-weight: 800;
+      color: var(--text-main);
+      white-space: nowrap;
+      align-self: flex-start;
+      text-align: left;
+    }
+
+    .headerBrandColumn {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 220px;
+      max-width: 280px;
+      flex: 0 0 250px;
+      align-items: flex-start;
+      text-align: left;
+    }
+
+    .searchCluster {
+      flex: 0 0 340px;
+      min-width: 260px;
+      width: 340px;
+      position: relative;
+    }
+
+    .searchCluster .label {
+      margin: 0 0 6px 0;
+    }
+
+    .headerAuth {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      max-width: none;
+      flex: 0 0 auto;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      padding: 0;
+      box-shadow: none;
+    }
+
+    .headerAuthActions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: nowrap;
+    }
+
+    .headerUserProfile {
+      font-size: 13px;
+      color: #cbd5e1;
+      display: none;
+      align-items: center;
+      white-space: nowrap;
+    }
+
+    .headerAuth .button,
+    .headerAuth .button.secondary {
+      width: auto;
+      margin-top: 0;
+      padding: 0 12px;
+      font-size: 13px;
+    }
+
+    .headerAuth #btn-login {
+      border-color: #3b82f6;
+      background: linear-gradient(145deg, #4d86ff, #2f6fe6);
+      color: #fff;
+    }
+
+    .headerAuth #btn-logout {
+      border-color: rgba(159, 176, 202, 0.28);
+      background: rgba(43, 57, 82, 0.86);
+      color: var(--text-main);
+    }
+
+    .headerTypes {
+      display: inline-flex;
+      gap: 0;
+      flex-wrap: nowrap;
+      align-self: center;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.05);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .headerActions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: nowrap;
+      align-self: center;
+    }
+
+    .headerAttribution {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 0;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+    }
+
+    .headerAttribution img {
+      width: 70px;
+      height: auto;
+      display: block;
+      object-fit: contain;
+      border-radius: 0;
+      box-shadow: none;
+      aspect-ratio: auto;
+    }
+
+    .headerSearchRow {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .searchSummary {
+      display: block;
+      font-size: 13px;
+      color: var(--text-muted);
+      padding: 8px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      background: rgba(57, 68, 84, 0.34);
+      margin-bottom: 12px;
+    }
+
+    .sidebar-hide-btn {
+      margin: 0 0 12px 0;
+      width: 100%;
+      padding: 10px 14px;
+      white-space: nowrap;
     }
 
     .label {
       display: block;
       margin-top: 12px;
       font-size: 13px;
-      color: #cbd5e1;
+      color: var(--text-muted);
       font-weight: 600;
     }
 
@@ -49,32 +260,41 @@
       width: 100%;
       margin-top: 12px;
       padding: 12px;
-      border-radius: 10px;
-      border: 1px solid #3b82f6;
-      background: #3b82f6;
+      border-radius: 11px;
+      border: 1px solid rgba(10, 132, 255, 0.72);
+      background: #0a84ff;
       color: white;
       cursor: pointer;
       font-size: 14px;
-      font-weight: 500;
+      font-weight: 600;
+      box-shadow: 0 3px 10px rgba(10, 132, 255, 0.26);
+      transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
+    }
+
+    .button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 5px 14px rgba(10, 132, 255, 0.32);
+      filter: brightness(1.02);
     }
 
     .button.secondary {
-      background: #1e293b;
-      color: #cbd5e1;
-      border: 1px solid #475569;
+      background: var(--surface-3);
+      color: var(--text-main);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
     }
 
     .button.secondary:hover {
-      background: #334155;
-      border-color: #64748b;
+      background: rgba(87, 98, 114, 0.5);
+      border-color: rgba(255, 255, 255, 0.24);
     }
 
     /* Tab buttons for watchlist modal */
     .tab-button {
       padding: 8px 16px;
-      border: 1px solid #475569;
-      background: #1e293b;
-      color: #cbd5e1;
+      border: 1px solid rgba(159, 176, 202, 0.28);
+      background: rgba(44, 58, 84, 0.9);
+      color: var(--text-main);
       border-radius: 6px;
       cursor: pointer;
       font-size: 13px;
@@ -83,8 +303,8 @@
     }
 
     .tab-button:hover {
-      background: #334155;
-      border-color: #64748b;
+      background: rgba(73, 90, 120, 0.8);
+      border-color: rgba(189, 204, 227, 0.42);
     }
 
     .tab-button.active {
@@ -149,8 +369,8 @@
     }
 
     .rated-item {
-      background: #1e293b;
-      border: 1px solid #334155;
+      background: rgba(38, 51, 74, 0.85);
+      border: 1px solid var(--border-soft);
       border-radius: 8px;
       padding: 16px;
       cursor: pointer;
@@ -164,8 +384,8 @@
     }
 
     .watchlist-card {
-      background: #1e293b;
-      border: 1px solid #334155;
+      background: rgba(38, 51, 74, 0.85);
+      border: 1px solid var(--border-soft);
       border-radius: 8px;
       overflow: hidden;
       cursor: pointer;
@@ -208,7 +428,7 @@
     .status {
       margin-top: 12px;
       font-size: 12px;
-      color: #94a3b8;
+      color: var(--text-muted);
       line-height: 1.3;
     }
 
@@ -245,22 +465,22 @@
     /* Language Button */
     #language-button {
       transition: all 0.2s;
-      border: 1px solid #475569;
-      background: #1e293b;
-      color: #cbd5e1;
+      border: 1px solid rgba(159, 176, 202, 0.28);
+      background: var(--surface-3);
+      color: var(--text-main);
     }
 
     #language-button:hover {
-      border-color: #64748b;
-      background: #334155;
+      border-color: rgba(189, 204, 227, 0.42);
+      background: rgba(73, 90, 120, 0.8);
     }
 
     /* Mobile Header */
     .mobile-header {
       display: none;
       padding: 12px 16px;
-      background: #1e293b;
-      border-bottom: 1px solid #334155;
+      background: rgba(35, 47, 70, 0.9);
+      border-bottom: 1px solid var(--border-soft);
       justify-content: space-between;
       align-items: center;
       position: sticky;
@@ -306,8 +526,8 @@
     }
 
     .watchlist-btn {
-      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-      border: 1px solid #1e40af;
+      background: #0a84ff;
+      border: 1px solid rgba(10, 132, 255, 0.72);
       color: white;
       padding: 8px 16px;
       border-radius: 8px;
@@ -318,18 +538,41 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
+      box-shadow: 0 4px 12px rgba(10, 132, 255, 0.26);
     }
 
     .watchlist-btn:hover {
-      background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+      background: #2a95ff;
+      box-shadow: 0 6px 14px rgba(10, 132, 255, 0.34);
       transform: translateY(-1px);
     }
 
     .watchlist-btn:active {
       transform: translateY(0);
       box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+    }
+
+    .theme-toggle-btn {
+      background: var(--surface-3);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      transition: all 0.18s ease;
+      white-space: nowrap;
+    }
+
+    .theme-toggle-btn:hover {
+      background: rgba(87, 98, 114, 0.5);
+      border-color: rgba(255, 255, 255, 0.24);
     }
 
     /* Settings Table */
@@ -444,48 +687,210 @@
 
     /* Unified search input with chips */
     .searchBox {
-      margin-top: 6px;
-      border: 1px solid #475569;
-      border-radius: 12px;
-      padding: 8px;
-      background: #0f172a;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      margin-top: 0;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 13px;
+      padding: 6px 8px;
+      background: rgba(53, 64, 79, 0.34);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 5px 14px rgba(0, 0, 0, 0.2);
+      min-height: 36px;
+      height: auto;
+      display: grid;
+      gap: 4px;
+      backdrop-filter: blur(18px) saturate(108%);
+      position: relative;
     }
 
     .chips {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
-      margin-bottom: 6px;
+      margin-bottom: 0;
+      overflow: visible;
+      max-width: 100%;
+      padding-bottom: 0;
+      scrollbar-width: thin;
+      min-width: 0;
+      width: 100%;
+    }
+
+    .chips:empty {
+      display: none;
+      padding-bottom: 0;
     }
 
     .chip {
-      display: inline-flex;
-      gap: 6px;
+      display: inline-grid;
+      grid-auto-flow: column;
+      grid-auto-columns: max-content;
       align-items: center;
-      padding: 4px 10px;
-      border: 1px solid #475569;
+      gap: 8px;
+      padding: 3px 8px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
       border-radius: 999px;
       font-size: 12px;
-      background: #1e293b;
-      color: #cbd5e1;
+      background: rgba(83, 95, 113, 0.45);
+      color: var(--text-main);
+      white-space: nowrap;
+      flex: 0 0 auto;
+      overflow: visible;
+      max-width: 100%;
+    }
+
+    .chipText {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      overflow: visible;
+    }
+
+    .chipName {
+      display: inline-block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 220px;
+      white-space: nowrap;
+    }
+
+    .searchInputRow {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      width: 100%;
+      min-width: 0;
+      padding-left: 0;
+    }
+
+    .searchBox .inputInline {
+      height: 26px;
+      min-width: 0;
+      width: 100%;
+      flex: 1 1 auto;
+      padding-top: 0;
+      padding-bottom: 0;
+      font-size: 14px;
+    }
+
+    .searchBox .settings-btn {
+      position: absolute;
+      top: -8px;
+      left: -8px;
+      height: 20px;
+      width: 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      margin: 0;
+      border: none;
+      background: transparent;
+      box-shadow: none;
+      color: var(--text-muted);
+      font-size: 15px;
+      line-height: 1;
+      z-index: 6;
+    }
+
+    .searchBox .settings-btn:hover {
+      color: var(--text-main);
+      background: transparent;
+      border: none;
+      transform: none;
+    }
+
+    .search-submit-btn {
+      height: 26px;
+      min-width: 68px;
+      margin-top: 0;
+      padding: 0 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(10, 132, 255, 0.72);
+      background: #0a84ff;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .headerTypes .button,
+    .headerTypes .button.secondary,
+    .headerActions .watchlist-btn,
+    .headerAuth .button,
+    .headerAuth .button.secondary {
+      height: 36px;
+      padding-top: 0;
+      padding-bottom: 0;
+      padding-left: 12px;
+      padding-right: 12px;
+      font-size: 13px;
+      border-radius: 9px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .headerTypes .button,
+    .headerTypes .button.secondary {
+      margin: 0;
+      width: auto;
+      flex: 0 0 auto;
+      border: none;
+      border-right: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 0;
+      min-width: 0;
+      padding-left: 18px;
+      padding-right: 18px;
+      box-shadow: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .headerTypes .button:last-child,
+    .headerTypes .button.secondary:last-child {
+      border-right: none;
+    }
+
+    .headerTypes .button {
+      background: #0a84ff;
+      color: #fff;
+    }
+
+    .headerTypes .button.secondary:hover {
+      background: rgba(255, 255, 255, 0.09);
+      color: var(--text-main);
+      transform: none;
     }
 
     .chip button {
       border: none;
       background: transparent;
       cursor: pointer;
-      font-size: 16px;
+      font-size: 14px;
+      font-weight: 600;
       line-height: 1;
       color: #64748b;
-      padding: 0 2px;
+      padding: 0;
+      min-width: 16px;
+      height: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      overflow: visible;
+      flex: 0 0 auto;
     }
 
     .chipType {
-      font-size: 10px;
+      font-size: 11px;
       color: #64748b;
       text-transform: uppercase;
       letter-spacing: 0.5px;
+      white-space: nowrap;
     }
 
     .inputInline {
@@ -496,7 +901,7 @@
       box-sizing: border-box;
       font-size: 15px;
       background: transparent;
-      color: #e2e8f0;
+      color: #eef3fb;
     }
 
     .inputInline:disabled {
@@ -512,17 +917,18 @@
     /* Autocomplete suggestions */
     .results {
       margin-top: 6px;
-      border: 1px solid #475569;
+      border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 12px;
       overflow: hidden;
-      background: #1e293b;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+      background: rgba(45, 56, 71, 0.5);
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(18px) saturate(108%);
     }
 
     .resultItem {
       padding: 10px 12px;
       cursor: pointer;
-      border-bottom: 1px solid #334155;
+      border-bottom: 1px solid rgba(159, 176, 202, 0.14);
       display: flex;
       justify-content: space-between;
       gap: 10px;
@@ -535,7 +941,7 @@
 
     .resultItem:hover,
     .resultItem.selected {
-      background: #334155;
+      background: rgba(108, 120, 137, 0.4);
     }
 
     .suggestionType {
@@ -547,22 +953,26 @@
     /* Grid */
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+      gap: 18px;
       margin-top: 16px;
     }
 
     .card {
-      border: none;
-      border-radius: 12px;
-      padding: 0;
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      border-radius: 14px;
+      padding: 10px;
       cursor: pointer;
-      transition: transform 0.2s;
-      background: transparent;
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+      background: rgba(56, 67, 82, 0.34);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.24);
+      backdrop-filter: blur(12px) saturate(108%);
     }
 
     .card:hover {
       transform: translateY(-4px);
+      border-color: rgba(255, 255, 255, 0.22);
+      box-shadow: 0 10px 22px rgba(0, 0, 0, 0.3);
     }
 
     img {
@@ -606,7 +1016,7 @@
     .modalOverlay {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.8);
+      background: rgba(8, 12, 18, 0.54);
       backdrop-filter: blur(4px);
       display: none;
       align-items: center;
@@ -620,14 +1030,15 @@
     }
 
     .modal {
-      background: #1e293b;
+      background: linear-gradient(180deg, rgba(48, 59, 74, 0.58), rgba(38, 48, 62, 0.56));
       border-radius: 20px;
       max-width: 900px;
       width: 100%;
       max-height: 90vh;
       overflow: auto;
-      border: 1px solid #334155;
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--border-soft);
+      box-shadow: var(--shadow-strong);
+      backdrop-filter: blur(26px) saturate(110%);
     }
 
     .modalHeader {
@@ -637,7 +1048,7 @@
       padding: 20px 24px 0 24px;
       position: sticky;
       top: 0;
-      background: #1e293b;
+      background: rgba(53, 64, 79, 0.56);
       z-index: 10;
     }
 
@@ -684,19 +1095,19 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      border: 1px solid #475569;
+      border: 1px solid rgba(159, 176, 202, 0.28);
       border-radius: 999px;
       padding: 6px 12px;
       font-size: 12px;
       cursor: pointer;
-      background: #0f172a;
-      color: #cbd5e1;
+      background: rgba(43, 57, 82, 0.86);
+      color: var(--text-main);
       transition: all 0.2s;
     }
 
     .pill:hover {
-      background: #334155;
-      border-color: #64748b;
+      background: rgba(73, 90, 120, 0.8);
+      border-color: rgba(189, 204, 227, 0.42);
     }
 
     .providerGrid {
@@ -713,16 +1124,16 @@
       cursor: pointer;
       padding: 6px;
       border-radius: 12px;
-      border: 1px solid #334155;
+      border: 1px solid rgba(255, 255, 255, 0.14);
       transition: all 0.2s;
       height: 64px;
       box-sizing: border-box;
-      background: #0f172a;
+      background: rgba(67, 78, 95, 0.34);
     }
 
     .providerItem:hover {
-      background: #1e293b;
-      border-color: #475569;
+      background: rgba(86, 98, 116, 0.4);
+      border-color: rgba(255, 255, 255, 0.24);
     }
 
     .providerItem.selected-provider {
@@ -759,9 +1170,13 @@
     }
 
     .subtle {
-      color: #94a3b8;
+      color: var(--text-muted);
       font-size: 13px;
       margin-top: 6px;
+    }
+
+    #output {
+      min-height: calc(100vh - 170px);
     }
 
     /* Tables in modals */
@@ -770,19 +1185,19 @@
     }
 
     table th {
-      color: #94a3b8;
+      color: var(--text-muted);
     }
 
     table td {
-      color: #cbd5e1;
+      color: var(--text-main);
     }
 
     table tr {
-      border-color: #334155 !important;
+      border-color: var(--border-soft) !important;
     }
 
     .provider-row:hover {
-      background: #334155 !important;
+      background: rgba(148, 163, 184, 0.18) !important;
     }
 
     @media (max-width: 800px) {
@@ -799,7 +1214,7 @@
         position: fixed;
         inset: 0;
         z-index: 2000;
-        background: #1e293b;
+        background: rgba(26, 36, 56, 0.98);
         width: 100%;
         height: 100%;
         padding: 20px;
@@ -816,6 +1231,46 @@
 
       .main {
         padding: 16px;
+      }
+
+      .mainHeader {
+        position: static;
+        margin: 0 0 12px 0;
+      }
+
+      .headerOneRow {
+        flex-wrap: wrap;
+        overflow: visible;
+      }
+
+      .searchCluster {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        flex: 1 1 100%;
+      }
+
+      .headerBrandColumn {
+        width: 100%;
+        max-width: 100%;
+        flex: 1 1 100%;
+      }
+
+      .headerAuth {
+        width: 100%;
+        max-width: 100%;
+        flex: 1 1 100%;
+      }
+
+      .headerTypes,
+      .headerActions {
+        width: 100%;
+        flex-wrap: wrap;
+      }
+
+      .headerAttribution {
+        width: 100%;
+        justify-content: center;
       }
 
       .modalOverlay {
@@ -848,6 +1303,10 @@
         gap: 12px;
       }
 
+      .mobile-filter-btn {
+        width: 100%;
+      }
+
       .providerGrid {
         grid-template-columns: repeat(4, 1fr);
       }
@@ -864,42 +1323,398 @@
         opacity: 1;
       }
     }
+
+    .aiChatToggle {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 220;
+      width: 58px;
+      height: 58px;
+      border-radius: 999px;
+      border: 1px solid rgba(10, 132, 255, 0.72);
+      background: #0a84ff;
+      color: #fff;
+      font-size: 24px;
+      cursor: pointer;
+      box-shadow: 0 7px 18px rgba(10, 132, 255, 0.34);
+    }
+
+    .aiChatPanel {
+      position: fixed;
+      right: 20px;
+      bottom: 88px;
+      z-index: 221;
+      width: min(420px, calc(100vw - 24px));
+      height: min(620px, calc(100vh - 120px));
+      display: none;
+      flex-direction: column;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(52, 63, 79, 0.56), rgba(41, 52, 66, 0.54));
+      box-shadow: var(--shadow-strong);
+      backdrop-filter: blur(24px) saturate(110%);
+      overflow: hidden;
+    }
+
+    .aiChatPanel.open {
+      display: flex;
+    }
+
+    .aiChatHeader {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(159, 176, 202, 0.2);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .aiChatHeaderActions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .aiChatMiniBtn {
+      border: 1px solid rgba(159, 176, 202, 0.28);
+      background: rgba(43, 57, 82, 0.9);
+      color: #fff;
+      border-radius: 8px;
+      padding: 6px 9px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .aiChatMessages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .aiChatBubble {
+      max-width: 90%;
+      line-height: 1.4;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .aiChatBubble.user {
+      align-self: flex-end;
+      background: #0a84ff;
+      color: #fff;
+    }
+
+    .aiChatBubble.assistant {
+      align-self: flex-start;
+      background: rgba(89, 100, 118, 0.36);
+      color: #e5e7eb;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    .aiChatSources {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .aiChatSource {
+      appearance: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+      text-align: left;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(96, 165, 250, 0.45);
+      color: #bfdbfe;
+      background: rgba(30, 64, 175, 0.3);
+    }
+
+    .aiChatSource:hover {
+      background: rgba(37, 99, 235, 0.42);
+      border-color: rgba(147, 197, 253, 0.65);
+    }
+
+    .aiChatComposer {
+      border-top: 1px solid rgba(159, 176, 202, 0.2);
+      padding: 10px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+    }
+
+    .aiChatInput {
+      resize: none;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(66, 77, 95, 0.34);
+      color: #fff;
+      font: inherit;
+      font-size: 14px;
+      padding: 10px;
+      min-height: 44px;
+      max-height: 110px;
+      outline: none;
+    }
+
+    .aiChatSendBtn {
+      align-self: end;
+      border-radius: 10px;
+      border: 1px solid rgba(10, 132, 255, 0.72);
+      background: #0a84ff;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 0 14px;
+      height: 44px;
+      cursor: pointer;
+    }
+
+    .aiChatStatus {
+      min-height: 16px;
+      padding: 0 12px 10px;
+      font-size: 12px;
+      color: #93c5fd;
+    }
+
+    html[data-theme='light'] {
+      --bg-0: #edf1f6;
+      --bg-1: #e8edf4;
+      --bg-2: #dde5ef;
+      --surface-1: rgba(255, 255, 255, 0.76);
+      --surface-2: rgba(252, 254, 255, 0.74);
+      --surface-3: rgba(228, 234, 243, 0.84);
+      --border-soft: rgba(16, 24, 40, 0.12);
+      --text-main: #101828;
+      --text-muted: #475467;
+      --shadow-soft: 0 10px 24px rgba(16, 24, 40, 0.12);
+      --shadow-strong: 0 16px 34px rgba(16, 24, 40, 0.16);
+    }
+
+    html[data-theme='light'] body {
+      background:
+        radial-gradient(920px 540px at 82% -8%, rgba(10, 132, 255, 0.12), transparent 66%),
+        radial-gradient(860px 520px at 8% 100%, rgba(94, 92, 230, 0.06), transparent 64%),
+        linear-gradient(165deg, var(--bg-0), var(--bg-1) 58%, var(--bg-2) 100%);
+      color: var(--text-main);
+    }
+
+    html[data-theme='light'] .sidebar,
+    html[data-theme='light'] .main {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(248, 250, 253, 0.76));
+      border-color: rgba(15, 23, 42, 0.1);
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+      backdrop-filter: blur(22px) saturate(108%);
+    }
+
+    html[data-theme='light'] .mainHeader {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(246, 249, 253, 0.72));
+      border-color: rgba(15, 23, 42, 0.1);
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.09);
+      backdrop-filter: blur(22px) saturate(110%);
+    }
+
+    html[data-theme='light'] .headerTitle {
+      color: #0f172a;
+    }
+
+    html[data-theme='light'] .searchSummary {
+      background: rgba(255, 255, 255, 0.84);
+      border-color: rgba(15, 23, 42, 0.12);
+      color: #475467;
+    }
+
+    html[data-theme='light'] .badge {
+      background: #0a84ff;
+      color: #fff;
+    }
+
+    html[data-theme='light'] .watchlist-item:hover {
+      background-color: rgba(10, 132, 255, 0.08);
+    }
+
+    html[data-theme='light'] .headerUserProfile,
+    html[data-theme='light'] .watchlist-item-title,
+    html[data-theme='light'] .movieTitle,
+    html[data-theme='light'] .sectionTitle,
+    html[data-theme='light'] table,
+    html[data-theme='light'] table td,
+    html[data-theme='light'] table th {
+      color: #101828;
+    }
+
+    html[data-theme='light'] .meta,
+    html[data-theme='light'] .subtle,
+    html[data-theme='light'] .status,
+    html[data-theme='light'] .watchlist-item-description,
+    html[data-theme='light'] .suggestionType,
+    html[data-theme='light'] .chipType,
+    html[data-theme='light'] .inputInline::placeholder,
+    html[data-theme='light'] .settings-table th {
+      color: #475467;
+    }
+
+    html[data-theme='light'] .inputInline {
+      color: #101828;
+    }
+
+    html[data-theme='light'] .card,
+    html[data-theme='light'] .watchlist-card,
+    html[data-theme='light'] .rated-item,
+    html[data-theme='light'] .searchBox,
+    html[data-theme='light'] .results,
+    html[data-theme='light'] .aiChatBubble.assistant,
+    html[data-theme='light'] .aiChatPanel,
+    html[data-theme='light'] .modal,
+    html[data-theme='light'] .modalHeader,
+    html[data-theme='light'] .providerItem,
+    html[data-theme='light'] .theme-toggle-btn {
+      background: rgba(255, 255, 255, 0.74);
+      border-color: rgba(16, 24, 40, 0.12);
+      color: #101828;
+    }
+
+    html[data-theme='light'] .modalOverlay {
+      background: rgba(15, 23, 42, 0.3);
+    }
+
+    html[data-theme='light'] .resultItem:hover,
+    html[data-theme='light'] .resultItem.selected,
+    html[data-theme='light'] .providerItem:hover,
+    html[data-theme='light'] .button.secondary:hover,
+    html[data-theme='light'] .theme-toggle-btn:hover {
+      background: rgba(233, 239, 248, 0.9);
+    }
+
+    html[data-theme='light'] .button.secondary,
+    html[data-theme='light'] .tab-button,
+    html[data-theme='light'] #language-button,
+    html[data-theme='light'] .settings-btn,
+    html[data-theme='light'] .chip {
+      background: rgba(247, 249, 252, 0.95);
+      border-color: rgba(16, 24, 40, 0.14);
+      color: #101828;
+    }
+
+    html[data-theme='light'] .pill,
+    html[data-theme='light'] .provider-pill,
+    html[data-theme='light'] .publisher-pill,
+    html[data-theme='light'] .designer-pill,
+    html[data-theme='light'] .writer-pill,
+    html[data-theme='light'] .director-pill,
+    html[data-theme='light'] .keyword-pill {
+      background: rgba(244, 248, 255, 0.96) !important;
+      border-color: rgba(10, 132, 255, 0.28) !important;
+      color: #0f172a !important;
+    }
+
+    html[data-theme='light'] .pill:hover,
+    html[data-theme='light'] .provider-pill:hover,
+    html[data-theme='light'] .publisher-pill:hover,
+    html[data-theme='light'] .designer-pill:hover,
+    html[data-theme='light'] .writer-pill:hover,
+    html[data-theme='light'] .director-pill:hover,
+    html[data-theme='light'] .keyword-pill:hover {
+      background: rgba(232, 240, 255, 0.98) !important;
+      border-color: rgba(10, 132, 255, 0.42) !important;
+      color: #0f172a !important;
+    }
+
+    html[data-theme='light'] .headerTypes {
+      border-color: rgba(16, 24, 40, 0.16);
+      background: rgba(255, 255, 255, 0.7);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    }
+
+    html[data-theme='light'] .headerTypes .button,
+    html[data-theme='light'] .headerTypes .button.secondary {
+      color: #475467;
+      border-right-color: rgba(16, 24, 40, 0.12);
+      background: transparent;
+    }
+
+    html[data-theme='light'] .headerTypes .button {
+      background: #0a84ff;
+      color: #fff;
+    }
+
+    html[data-theme='light'] .tab-button.active,
+    html[data-theme='light'] .button,
+    html[data-theme='light'] .watchlist-btn,
+    html[data-theme='light'] .search-submit-btn,
+    html[data-theme='light'] .aiChatSendBtn,
+    html[data-theme='light'] .aiChatToggle,
+    html[data-theme='light'] .aiChatBubble.user,
+    html[data-theme='light'] .headerAuth #btn-login {
+      background: #0a84ff;
+      border-color: rgba(10, 132, 255, 0.72);
+      color: #fff;
+    }
+
+    html[data-theme='light'] .headerAuth #btn-logout {
+      background: rgba(247, 249, 252, 0.95);
+      border-color: rgba(16, 24, 40, 0.14);
+      color: #101828;
+    }
+
+    html[data-theme='light'] .toast {
+      background: rgba(255, 255, 255, 0.94);
+      color: #101828;
+      border-color: rgba(16, 24, 40, 0.12);
+    }
+
+    html[data-theme='light'] .toggle-slider {
+      background-color: #d0d5dd;
+    }
+
+    html[data-theme='light'] .provider-row:hover {
+      background: rgba(15, 23, 42, 0.06) !important;
+    }
+
+    html[data-theme='light'] input:checked + .toggle-slider {
+      background-color: #0a84ff;
+    }
+
+    @media (max-width: 640px) {
+      .aiChatToggle {
+        right: 12px;
+        bottom: 12px;
+      }
+
+      .aiChatPanel {
+        right: 12px;
+        left: 12px;
+        width: auto;
+        bottom: 80px;
+      }
+    }
   </style>
 </head>
 
 <body>
   <div class="search-container">
     <div class="mobile-header">
-      <h1 style="margin:0; font-size: 18px;">Movies <span class="badge">Astra DB</span></h1>
-      <button id="mobile-filter-btn" class="mobile-filter-btn">Search & Filters</button>
+      <h1 style="margin:0; font-size: 18px;">The Intersect</h1>
     </div>
 
-    <div class="app">
+    <div class="app sidebar-collapsed" id="app-layout">
       <aside class="sidebar" id="sidebar">
         <button id="mobile-close-sidebar" class="mobile-close-sidebar">Close Filters</button>
+        <button id="sidebar-hide-btn" class="button secondary sidebar-hide-btn" type="button">Hide Filters</button>
 
         <h1 style="margin-top:0;" class="desktop-only">Movies <span class="badge">Astra DB</span></h1>
 
-        <div id="auth-container" style="margin-bottom: 16px;">
-          <div style="background: #0f172a; padding: 12px; border-radius: 8px; border: 1px solid #334155;">
-            <div style="font-size: 12px; color: #94a3b8; margin-bottom: 6px; font-weight: 600;">TMDB Login</div>
-            <button id="btn-login" class="button" style="display: none; margin-top: 0;">Log In with TMDB</button>
-            <button id="btn-logout" class="button secondary" style="display: none; margin-top: 0;">Log Out</button>
-            <div id="user-profile" style="margin-top: 8px; font-size: 13px; color: #cbd5e1; display: none;"></div>
-          </div>
-        </div>
-
-        <h2 id="search-label" class="label">Search for Title/Genre/Person</h2>
-        <div class="searchBox">
-          <div id="chips" class="chips"></div>
-          <div style="display: flex; align-items: center;">
-            <input id="searchInput" class="inputInline" placeholder="Loading autocomplete..." autocomplete="off" disabled title="Loading autocomplete data..."
-              style="flex: 1;" />
-            <button id="settings-btn" class="settings-btn" title="Settings">⚙️</button>
-          </div>
-        </div>
-
-        <div id="suggestions" class="results" style="display:none;"></div>
+        <div class="subtle" style="margin-top: 6px; margin-bottom: 4px;">Use this panel for providers, language, and account controls.</div>
 
         <h3 id="providers-label" class="label" style="margin-top: 16px;">Select your streaming providers:</h3>
         <div id="providers" class="providerGrid"></div>
@@ -914,24 +1729,51 @@
       </aside>
 
       <main class="main">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <div style="display: flex; gap: 8px;">
-            <button id="btn-content-movies" class="button" style="margin: 0; padding: 10px 20px; background: #3b82f6; border: 1px solid #3b82f6; color: white;">Movies</button>
-            <button id="btn-content-tvshows" class="button secondary" style="margin: 0; padding: 10px 20px;">TV Shows</button>
-            <button id="btn-content-boardgames" class="button secondary" style="margin: 0; padding: 10px 20px;">Board Games</button>
-          </div>
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <button id="watchlist-btn" class="watchlist-btn">
-              ⭐ My Lists
-            </button>
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <a href="https://tmdb.org" target="_blank" rel="noopener noreferrer">
-                <img id="logo-img" src="/themoviedb.jpg" alt="The Movie Database"
-                  style="width: 80px; height: auto; display: block; aspect-ratio: auto; object-fit: contain; border-radius: 0; box-shadow: none;">
-              </a>
+        <div class="mainHeader">
+          <div class="headerOneRow">
+            <div class="headerBrandColumn">
+              <h1 class="headerTitle">The Intersect</h1>
+
+              <div id="auth-container" class="headerAuth">
+                <div class="headerAuthActions">
+                  <button id="btn-login" class="button" style="display: none;">TMDB Login</button>
+                  <button id="btn-logout" class="button secondary" style="display: none;">Log Out</button>
+                  <div id="user-profile" class="headerUserProfile"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="headerTypes">
+              <button id="btn-content-movies" class="button">Movies</button>
+              <button id="btn-content-tvshows" class="button secondary">TV Shows</button>
+              <button id="btn-content-boardgames" class="button secondary">Board Games</button>
+            </div>
+
+            <div class="headerActions">
+              <button id="theme-toggle-btn" class="theme-toggle-btn" type="button" title="Switch to Dark mode">Light</button>
+              <button id="watchlist-btn" class="watchlist-btn" type="button" aria-label="My Lists" title="My Lists">⭐</button>
+              <div class="searchCluster">
+                <h2 id="search-label" class="label" style="display: none;"></h2>
+                <div class="searchBox">
+                  <div id="chips" class="chips"></div>
+                  <div class="searchInputRow">
+                    <input id="searchInput" class="inputInline" placeholder="Loading autocomplete..." autocomplete="off" disabled title="Loading autocomplete data..."
+                      style="flex: 1;" />
+                    <button id="search-submit-btn" class="search-submit-btn" type="button">Search</button>
+                    <button id="settings-btn" class="settings-btn" title="Filters">⚙️</button>
+                  </div>
+                </div>
+                <div id="suggestions" class="results" style="display:none;"></div>
+              </div>
+              <div class="headerAttribution">
+                <a href="https://tmdb.org" target="_blank" rel="noopener noreferrer" style="display: flex; align-items: center;">
+                  <img id="logo-img" src="/themoviedb.jpg" alt="The Movie Database">
+                </a>
+              </div>
             </div>
           </div>
         </div>
+        <div id="search-summary" class="searchSummary">Discovering popular movies.</div>
         <div id="output">Loading…</div>
       </main>
     </div>
@@ -1040,18 +1882,25 @@
     </div>
   </div>
 
-  <script src="/main.js"></script>
+  <button id="ai-chat-toggle" class="aiChatToggle" type="button" aria-label="Open AI chat" title="Open AI chat">💬</button>
 
-  <!-- Chatbot -->
-  <script>
-    import('https://cdn.jsdelivr.net/npm/flowise-embed/dist/web.js').then(module => {
-      const Chatbot = module.default;
-      Chatbot.init({
-        chatflowid: "7f78bd0d-693b-4513-88e2-88095cbf704e",
-        apiHost: "https://cloud.flowiseai.com",
-      });
-    });
-  </script>
+  <section id="ai-chat-panel" class="aiChatPanel" aria-label="AI chat" aria-hidden="true">
+    <header class="aiChatHeader">
+      <span>Intersect AI Chat</span>
+      <div class="aiChatHeaderActions">
+        <button id="ai-chat-clear" class="aiChatMiniBtn" type="button">Clear</button>
+        <button id="ai-chat-close" class="aiChatMiniBtn" type="button">Close</button>
+      </div>
+    </header>
+    <div id="ai-chat-messages" class="aiChatMessages"></div>
+    <div id="ai-chat-status" class="aiChatStatus"></div>
+    <div class="aiChatComposer">
+      <textarea id="ai-chat-input" class="aiChatInput" placeholder="Ask about movies, TV shows, or board games..." rows="1"></textarea>
+      <button id="ai-chat-send" class="aiChatSendBtn" type="button">Send</button>
+    </div>
+  </section>
+
+  <script src="/main.js"></script>
 </body>
 
 </html>

@@ -264,6 +264,7 @@ export async function handler(event) {
         const languages = dedupeList(getList(qs.language));
         const providers = dedupeList(getList(qs.providers));
         const paymentTypes = getList(qs.payment_types || "stream");
+        const providerPopularityFloor = Math.max(0, parseFloat(qs.provider_min_popularity || "50") || 50);
         const limit = fetchLimit;
 
         // NEW: Type filter (movie, person, genre)
@@ -271,6 +272,7 @@ export async function handler(event) {
 
         // Check if we're searching board games
         const isBoardGameSearch = contentTypes.includes('boardgames') && contentTypes.length === 1;
+        const hasProviderFilters = providers.length > 0;
 
         // Check for "bare genre search" cache hit
         // Conditions: No text query, no specific movie/person/keyword/language/provider filters, but Genres ARE selected.
@@ -439,13 +441,17 @@ export async function handler(event) {
             });
           });
             
-            if (personList.length === 1 || genreList.length === 1 || keywordList.length === 1) {
+              if (!isBareGenre && (personList.length === 1 || genreList.length === 1 || keywordList.length === 1)) {
                  filterConditions.push({ vote_average: { $gt: 7 } });
             }
             
             if (languages.length > 0) filterConditions.push({ original_language: { $in: languages } });
 
             if (providers.length > 0) {
+                // Provider-filtered browsing should favor stronger titles.
+                // Can be overridden per request with provider_min_popularity.
+                filterConditions.push({ popularity: { $gte: providerPopularityFloor } });
+
                  const providerClauses = providers.map(provider => {
                      let variants = [provider];
                      if (provider === "Disney+") variants.push("Disney Plus");
@@ -466,11 +472,15 @@ export async function handler(event) {
                 });
                 filterConditions.push({ $or: providerClauses });
             } else {
-                 const paymentClauses = [];
-                 if (paymentTypes.includes('stream')) paymentClauses.push({ "watch_providers.US.stream": { $exists: true } });
-                 if (paymentTypes.includes('rent')) paymentClauses.push({ "watch_providers.US.rent": { $exists: true } });
-                 if (paymentTypes.includes('buy')) paymentClauses.push({ "watch_providers.US.buy": { $exists: true } });
-                 if (paymentClauses.length > 0) filterConditions.push({ $or: paymentClauses });
+                 // Bare genre pill searches are a hot path; avoid expensive provider existence checks
+                 // unless providers/payment mode was explicitly narrowed by the user.
+                 if (!isBareGenre) {
+                   const paymentClauses = [];
+                   if (paymentTypes.includes('stream')) paymentClauses.push({ "watch_providers.US.stream": { $exists: true } });
+                   if (paymentTypes.includes('rent')) paymentClauses.push({ "watch_providers.US.rent": { $exists: true } });
+                   if (paymentTypes.includes('buy')) paymentClauses.push({ "watch_providers.US.buy": { $exists: true } });
+                   if (paymentClauses.length > 0) filterConditions.push({ $or: paymentClauses });
+                 }
             }
         }
 
@@ -596,11 +606,18 @@ export async function handler(event) {
              let effectiveFilter = finalFilter;
              let searchOptions = { limit };
 
+             // Provider-filtered queries can time out with server-side sort.
+             // Pull a larger unsorted window, then rank in memory for better top results.
+             if (hasProviderFilters && !isBoardGameSearch) {
+               const providerCandidateLimit = Math.min(Math.max(limit * 8, 200), 3000);
+               searchOptions.limit = providerCandidateLimit;
+             }
+
              // Only apply optimizations if we actually have filters
              if (Object.keys(finalFilter).length > 0) {
                // 1. Sort filtered movie/tv results by popularity.
                //    Board games don't have a reliable popularity field here.
-               if (!isBoardGameSearch) {
+               if (!isBoardGameSearch && !isBareGenre && !hasProviderFilters) {
                  searchOptions.sort = { popularity: -1 };
                }
              }
@@ -611,13 +628,23 @@ export async function handler(event) {
              if (isBoardGameSearch) {
                  searchResults.sort((b, a) => (b.boardgamerank || 0) - (a.boardgamerank || 0));
              } else {
-                 searchResults.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+               searchResults.sort((a, b) => {
+                 const popDelta = (Number(b.popularity) || 0) - (Number(a.popularity) || 0);
+                 if (popDelta !== 0) return popDelta;
+                 return (Number(b.vote_average) || 0) - (Number(a.vote_average) || 0);
+               });
              }
              
                // Keep enough rows for requested page; paging applied below
                searchResults = searchResults.slice(0, limit);
 
-                 totalResults = await countCollections(collections, effectiveFilter, 10000);
+                 if (hasProviderFilters) {
+                   // Provider filters are expensive to count exactly and can time out.
+                   // Use current window size for stable UX; full cardinality should be indexed later.
+                   totalResults = searchResults.length;
+                 } else {
+                   totalResults = await countCollections(collections, effectiveFilter, 10000);
+                 }
         }
 
         // Boardgame guardrail: Data API $in on mixed string/array schemas can over-match.
@@ -669,6 +696,52 @@ export async function handler(event) {
 
             return categoriesMatch && mechanicsMatch;
           });
+
+          // If exact-match DB filtering under-returns due CSV schemas, augment
+          // from a small top-ranked candidate pool and re-apply strict matching.
+          const minNeeded = offset + pageSize + 1;
+          if (searchResults.length < minNeeded) {
+            try {
+              const boardgameCollection = collections.find(c => c.type === 'boardgame');
+              if (boardgameCollection) {
+                const candidatePool = await queryCollections(
+                  db,
+                  [boardgameCollection],
+                  { boardgamerank: { $lte: 750 } },
+                  { limit: 900 },
+                  900
+                );
+
+                const strictMatches = candidatePool.filter(item => {
+                  const categorySet = new Set(getCategoryValues(item).map(normalize));
+                  const mechanicSet = new Set(getMechanicValues(item).map(normalize));
+
+                  const categoriesMatch = genreList.every(g => categorySet.has(normalize(g)));
+                  const mechanicsMatch = keywordList.every(k => mechanicSet.has(normalize(k)));
+
+                  return categoriesMatch && mechanicsMatch;
+                });
+
+                const merged = [];
+                const seen = new Set();
+                for (const item of [...searchResults, ...strictMatches]) {
+                  const key = item?._id || item?.bggid || item?.id;
+                  if (!key || seen.has(key)) continue;
+                  seen.add(key);
+                  merged.push(item);
+                }
+
+                merged.sort((a, b) => (Number(a.boardgamerank) || Number.MAX_SAFE_INTEGER) - (Number(b.boardgamerank) || Number.MAX_SAFE_INTEGER));
+                searchResults = merged;
+              }
+            } catch (e) {
+              console.warn('[Boardgame filter] Candidate augmentation failed:', e?.message || e);
+            }
+          }
+
+          // Boardgame taxonomy matching is finalized in memory,
+          // so this is the correct total for pagination metadata.
+          totalResults = searchResults.length;
         }
         
         if (totalResults === 0) {
@@ -799,22 +872,20 @@ export async function handler(event) {
             console.log(`[Discover] Starting ${collInfo.name} (type: ${collInfo.type}) at ${new Date().toISOString()}`);
 
             if (collInfo.type === 'boardgame') {
-              // For board games: use average (not rating) and filter to avoid timeout
-              // Query without sort to avoid exceeding sortable document limit, then sort in memory
+              // Boardgame discover: take Top 100 by boardgamerank and sort ascending.
               const boardgameFilter = {
-                average: { $gt: 7 },
-                usersrated: { $gte: 1000 }
+                boardgamerank: { $lte: 100 }
               };
-              const boardgameFetchLimit = Math.min(fetchLimit * 4, 10000);
-              console.log(`[Discover] ${collInfo.name} - Query:`, boardgameFilter, `limit: ${boardgameFetchLimit} (no sort - will sort in memory)`);
+              const boardgameFetchLimit = 100;
+              console.log(`[Discover] ${collInfo.name} - Query:`, boardgameFilter, `limit: ${boardgameFetchLimit} (Top 100 by rank)`);
               results = await collection.find(boardgameFilter, { limit: boardgameFetchLimit }).toArray();
               console.log(`[Discover] ${collInfo.name} - Query completed in ${Date.now() - startTime}ms, returned ${results.length} results`);
 
               // Ensure each result has bggid as id
               results = results.map(r => ({ ...r, id: r.bggid || r._id }));
 
-              // Sort in memory by usersrated descending (most popular first)
-              results.sort((a, b) => (b.usersrated || 0) - (a.usersrated || 0));
+              // Sort in memory by boardgamerank ascending (#1 first)
+              results.sort((a, b) => (Number(a.boardgamerank) || Number.MAX_SAFE_INTEGER) - (Number(b.boardgamerank) || Number.MAX_SAFE_INTEGER));
             } else if (collInfo.type === 'tv') {
               // TV shows: Query without sort to avoid timeout (no index on popularity), then sort in memory
               const tvFilter = {
@@ -882,7 +953,12 @@ export async function handler(event) {
         const end = offset + pageSize;
         // Exact countDocuments calls are too expensive for broad discover filters.
         // Use estimated collection totals for stable, scalable paging metadata.
-        totalResults = estimatedTotalResults || allResults.length;
+        if (isBoardgameOnlyDiscover) {
+          totalResults = allResults.length;
+          estimatedTotalResults = allResults.length;
+        } else {
+          totalResults = estimatedTotalResults || allResults.length;
+        }
         const totalPages = Math.max(1, Math.ceil(totalResults / pageSize));
         const hasMore = page < totalPages;
 

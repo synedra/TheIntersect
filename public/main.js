@@ -2,6 +2,7 @@
 const TMDB_AUTH_API = "/.netlify/functions/tmdb_auth";
 const BGG_AUTH_API = "/.netlify/functions/bgg_auth";
 const USER_DATA_API = "/.netlify/functions/user_data";
+const CHAT_API = "/.netlify/functions/chat";
 const TMDB_PENDING_REQUEST_TOKEN_KEY = "tmdb_pending_request_token";
 const TMDB_PENDING_REQUEST_TOKEN_EXPIRES_KEY = "tmdb_pending_request_token_expires";
 
@@ -264,6 +265,8 @@ const updateUI = async () => {
   const btnLogout = document.getElementById("btn-logout");
   const userProfile = document.getElementById("user-profile");
 
+  if (btnLogin) btnLogin.textContent = "Log In";
+
   if (sessionId) {
     // Fetch account details
     try {
@@ -283,16 +286,23 @@ const updateUI = async () => {
         }
 
         if (btnLogin) btnLogin.style.display = "none";
-        if (btnLogout) btnLogout.style.display = "block";
+        if (btnLogout) {
+          const displayName = user.username || user.name || localStorage.getItem("tmdb_username") || "User";
+          btnLogout.style.display = "inline-flex";
+          btnLogout.textContent = `Log out ${displayName}`;
+        }
         if (userProfile) {
-            userProfile.style.display = "block";
-            userProfile.innerHTML = `Logged in as <b>${user.username || "User"}</b>`;
+          userProfile.style.display = "none";
+          userProfile.innerHTML = "";
         }
     } catch (e) {
         console.error("Error fetching account", e);
     }
   } else {
-    if (btnLogin) btnLogin.style.display = "block";
+    if (btnLogin) {
+      btnLogin.style.display = "inline-flex";
+      btnLogin.textContent = "Log In";
+    }
     if (btnLogout) btnLogout.style.display = "none";
     if (userProfile) userProfile.style.display = "none";
   }
@@ -451,12 +461,167 @@ let selectedProviders = new Set();
 let searchMode = { stream: true, rentBuy: false, movies: true, tvshows: false, boardgames: false };
 let contentMode = 'movies'; // Always start with movies
 
+const sectionSearchState = {
+  movies: { filters: [], query: '', providers: [] },
+  tvshows: { filters: [], query: '', providers: [] },
+  boardgames: { filters: [], query: '', providers: [] }
+};
+
 let userHasSelectedContent = false;
 
 // Settings
 let settings = {
-  showSimilar: true
+  showSimilar: true,
+  themeMode: 'light' // light | dark
 };
+
+const themePreferenceQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+function getEffectiveTheme(themeMode) {
+  if (themeMode === 'light') return 'light';
+  if (themeMode === 'dark') return 'dark';
+  return themePreferenceQuery.matches ? 'dark' : 'light';
+}
+
+function updateThemeToggleButton() {
+  const button = document.getElementById('theme-toggle-btn');
+  if (!button) return;
+
+  const mode = settings.themeMode || 'light';
+  const labels = {
+    light: 'Light',
+    dark: 'Dark'
+  };
+
+  const titles = {
+    light: 'Switch to Dark mode',
+    dark: 'Switch to Light mode'
+  };
+
+  button.textContent = labels[mode] || labels.light;
+  button.title = titles[mode] || titles.light;
+}
+
+function applyTheme() {
+  const mode = settings.themeMode || 'light';
+  const effectiveTheme = getEffectiveTheme(mode);
+  document.documentElement.setAttribute('data-theme', effectiveTheme);
+  document.documentElement.setAttribute('data-theme-mode', mode);
+  updateThemeToggleButton();
+}
+
+function cycleThemeMode() {
+  const current = settings.themeMode || 'light';
+  const next = current === 'light' ? 'dark' : 'light';
+  settings.themeMode = next;
+  saveSettings();
+  applyTheme();
+}
+
+themePreferenceQuery.addEventListener('change', () => {
+  // no-op for explicit theme mode (light/dark only)
+});
+
+function syncSearchInputPlaceholder() {
+  const searchInput = document.getElementById('searchInput');
+  if (!searchInput) return;
+
+  const hasTypedText = String(searchInput.value || '').trim().length > 0;
+
+  if (selectedFilters.length > 0 || hasTypedText) {
+    searchInput.placeholder = '';
+    return;
+  }
+
+  if (searchMode.boardgames) {
+    searchInput.placeholder = 'Search games, designers, publishers…';
+  } else {
+    searchInput.placeholder = 'Search movies, actors, genres…';
+  }
+}
+
+function getActiveContentLabel() {
+  if (searchMode.boardgames) return "board games";
+  if (searchMode.tvshows) return "TV shows";
+  return "movies";
+}
+
+function getActiveSectionKey() {
+  if (searchMode.boardgames) return 'boardgames';
+  if (searchMode.tvshows) return 'tvshows';
+  return 'movies';
+}
+
+function saveCurrentSectionState() {
+  const key = getActiveSectionKey();
+  sectionSearchState[key] = {
+    filters: selectedFilters.map(f => ({ ...f })),
+    query: String(currentQuery || ''),
+    providers: Array.from(selectedProviders)
+  };
+}
+
+function restoreSectionState(sectionKey) {
+  const state = sectionSearchState[sectionKey] || { filters: [], query: '', providers: [] };
+  selectedFilters = Array.isArray(state.filters) ? state.filters.map(f => ({ ...f })) : [];
+  currentQuery = String(state.query || '');
+  selectedProviders = new Set(Array.isArray(state.providers) ? state.providers : []);
+
+  const input = document.getElementById('searchInput');
+  if (input) input.value = currentQuery;
+}
+
+function switchToSection(sectionKey) {
+  if (!['movies', 'tvshows', 'boardgames'].includes(sectionKey)) return;
+
+  const currentKey = getActiveSectionKey();
+  saveCurrentSectionState();
+
+  searchMode.movies = sectionKey === 'movies';
+  searchMode.tvshows = sectionKey === 'tvshows';
+  searchMode.boardgames = sectionKey === 'boardgames';
+
+  restoreSectionState(sectionKey);
+  renderChips();
+  updateContentButtons();
+  if (currentKey !== sectionKey) {
+    loadPage(1);
+  }
+}
+
+function updateSearchSummary() {
+  const summaryEl = document.getElementById('search-summary');
+  if (!summaryEl) return;
+
+  const parts = [`Showing ${getActiveContentLabel()}`];
+  const activeQuery = String(currentQuery || '').trim();
+
+  if (activeQuery) {
+    parts.push(`Search: "${activeQuery}"`);
+  }
+
+  if (selectedFilters.length > 0) {
+    const filterPreview = selectedFilters.slice(0, 3).map(f => f.name).join(', ');
+    const remainder = selectedFilters.length > 3 ? ` +${selectedFilters.length - 3} more` : '';
+    parts.push(`Filters: ${filterPreview}${remainder}`);
+  } else {
+    parts.push('No filters');
+  }
+
+  if (!searchMode.boardgames && selectedProviders.size > 0) {
+    const providers = Array.from(selectedProviders);
+    const providerPreview = providers.slice(0, 2).join(', ');
+    const providerRemainder = providers.length > 2 ? ` +${providers.length - 2}` : '';
+    parts.push(`Providers: ${providerPreview}${providerRemainder}`);
+  }
+
+  const languageText = (document.getElementById('language-button-text')?.textContent || '').trim();
+  if (languageText && !/select languages/i.test(languageText)) {
+    parts.push(`Languages: ${languageText}`);
+  }
+
+  summaryEl.textContent = parts.join(' • ');
+}
 
 // Load settings from localStorage
 function loadSettings() {
@@ -468,6 +633,18 @@ function loadSettings() {
       console.error('Error loading settings:', e);
     }
   }
+
+  // Migrate legacy "auto" to the current system preference.
+  if (settings.themeMode === 'auto') {
+    settings.themeMode = getEffectiveTheme('auto');
+    saveSettings();
+  }
+
+  if (!['light', 'dark'].includes(settings.themeMode)) {
+    settings.themeMode = getEffectiveTheme('auto');
+  }
+
+  applyTheme();
 }
 
 // Save settings to localStorage
@@ -552,7 +729,7 @@ function enableSearchIfReady() {
   // For boardgames-only mode, we still wait for boardgame data
   if (movieAutocompleteData.length > 0) {
     searchInput.disabled = false;
-    searchInput.placeholder = 'Search movies, actors, genres…';
+    syncSearchInputPlaceholder();
     searchInput.title = '';
     console.log('[Autocomplete] Search input enabled');
   }
@@ -614,15 +791,21 @@ function showAutocomplete(query) {
       const type = item.dataset.type;
 
       if (type === 'boardgame' || type === 'movie' || type === 'tv') {
-        // For movies/TV/boardgames, add as movie_id filter (which will show only that item)
-        addFilter('movie_id', id, name);
+        // For item suggestions, use content-specific ID filters.
+        if (type === 'boardgame') {
+          addFilter('boardgame_id', id, name);
+        } else {
+          addFilter('movie_id', id, name);
+        }
       } else if (type === 'person') {
         addFilter('person', name, name);
       } else if (type === 'genre') {
         addFilter('genre', name, name);
       }
 
+      currentQuery = '';
       document.getElementById('searchInput').value = '';
+      syncSearchInputPlaceholder();
       suggestionsDiv.style.display = 'none';
     });
   });
@@ -630,13 +813,46 @@ function showAutocomplete(query) {
 
 // Search input event handler
 const searchInput = document.getElementById('searchInput');
+const searchSubmitBtn = document.getElementById('search-submit-btn');
+
+function runFreeformSearch() {
+  const input = document.getElementById('searchInput');
+  if (!input) return;
+
+  currentQuery = String(input.value || '').trim();
+
+  const suggestionsDiv = document.getElementById('suggestions');
+  if (suggestionsDiv) suggestionsDiv.style.display = 'none';
+  selectedSuggestionIndex = -1;
+
+  syncSearchInputPlaceholder();
+  updateSearchSummary();
+  loadPage(1);
+}
+
 if (searchInput) {
   searchInput.addEventListener('input', (e) => {
     selectedSuggestionIndex = -1;
+    syncSearchInputPlaceholder();
     showAutocomplete(e.target.value);
   });
 
   searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const suggestionsDiv = document.getElementById('suggestions');
+      const hasSuggestions = suggestionsDiv && suggestionsDiv.style.display !== 'none';
+
+      if (hasSuggestions && selectedSuggestionIndex >= 0) {
+        e.preventDefault();
+        const items = suggestionsDiv.querySelectorAll('.resultItem');
+        items[selectedSuggestionIndex]?.click();
+      } else {
+        e.preventDefault();
+        runFreeformSearch();
+      }
+      return;
+    }
+
     const suggestionsDiv = document.getElementById('suggestions');
     if (!suggestionsDiv || suggestionsDiv.style.display === 'none') return;
 
@@ -650,14 +866,15 @@ if (searchInput) {
       e.preventDefault();
       selectedSuggestionIndex = Math.max(selectedSuggestionIndex - 1, -1);
       showAutocomplete(searchInput.value);
-    } else if (e.key === 'Enter' && selectedSuggestionIndex >= 0) {
-      e.preventDefault();
-      items[selectedSuggestionIndex]?.click();
     } else if (e.key === 'Escape') {
       suggestionsDiv.style.display = 'none';
       selectedSuggestionIndex = -1;
     }
   });
+}
+
+if (searchSubmitBtn) {
+  searchSubmitBtn.addEventListener('click', runFreeformSearch);
 }
 
 // Hide suggestions when clicking outside
@@ -677,13 +894,26 @@ function renderChips() {
 
   chipsContainer.innerHTML = selectedFilters.map(filter => {
     const safeId = String(filter.id).replace(/'/g, "\\'");
+    const typeLabelMap = {
+      movie_id: 'title',
+      boardgame_id: 'boardgame',
+      person: 'person',
+      genre: 'genre',
+      keyword: 'keyword'
+    };
+    const displayType = typeLabelMap[filter.type] || filter.type;
     return `
     <span class="chip">
-      ${escapeHtml(filter.name)}
-      <span class="chipType">${escapeHtml(filter.type)}</span>
+      <span class="chipText">
+        <span class="chipName">${escapeHtml(filter.name)}</span>
+        <span class="chipType">${escapeHtml(displayType)}</span>
+      </span>
       <button type="button" onclick="removeFilter('${safeId}')" aria-label="Remove">×</button>
     </span>
   `}).join("");
+
+  syncSearchInputPlaceholder();
+  updateSearchSummary();
 }
 
 window.removeFilter = function(id) {
@@ -715,7 +945,7 @@ function addKeywordFilter(keyword) {
 
   closeModal();
   // Keyword pills should broaden search and must not stay pinned to a prior title-id filter.
-  selectedFilters = selectedFilters.filter(f => f.type !== 'movie_id');
+  selectedFilters = selectedFilters.filter(f => f.type !== 'movie_id' && f.type !== 'boardgame_id');
 
   if (!selectedFilters.some(f => f.type === 'keyword' && f.name === normalizedKeyword)) {
     selectedFilters.push({ type: 'keyword', id: 'kw_' + normalizedKeyword, name: normalizedKeyword });
@@ -734,7 +964,7 @@ function addGenreFilter(genre) {
 
   closeModal();
   // Genre pills should broaden search and must not stay pinned to a prior title-id filter.
-  selectedFilters = selectedFilters.filter(f => f.type !== 'movie_id');
+  selectedFilters = selectedFilters.filter(f => f.type !== 'movie_id' && f.type !== 'boardgame_id');
 
   if (!selectedFilters.some(f => f.type === 'genre' && f.name === normalizedGenre)) {
     selectedFilters.push({ type: 'genre', id: normalizedGenre, name: normalizedGenre });
@@ -766,23 +996,66 @@ if (modalOverlay) {
   });
 }
 
-// Mobile Sidebar Logic
-const mobileFilterBtn = document.getElementById("mobile-filter-btn");
+// Filters Sidebar Logic
+const settingsBtn = document.getElementById("settings-btn");
 const mobileCloseSidebarBtn = document.getElementById("mobile-close-sidebar");
+const sidebarHideBtn = document.getElementById("sidebar-hide-btn");
 const sidebar = document.getElementById("sidebar");
+const appLayout = document.getElementById("app-layout");
 
-if (mobileFilterBtn && sidebar) {
-  mobileFilterBtn.addEventListener("click", () => {
-    sidebar.classList.add("open");
-    document.body.style.overflow = "hidden"; // Prevent background scrolling
+function isMobileViewport() {
+  return window.matchMedia('(max-width: 800px)').matches;
+}
+
+function setSidebarVisibility(visible) {
+  if (!sidebar) return;
+
+  if (isMobileViewport()) {
+    if (visible) {
+      sidebar.classList.add("open");
+      document.body.style.overflow = "hidden";
+    } else {
+      sidebar.classList.remove("open");
+      document.body.style.overflow = "";
+    }
+    return;
+  }
+
+  if (appLayout) {
+    appLayout.classList.toggle('sidebar-collapsed', !visible);
+  }
+}
+
+if (settingsBtn && sidebar) {
+  settingsBtn.addEventListener("click", () => {
+    setSidebarVisibility(true);
   });
 }
 
 if (mobileCloseSidebarBtn && sidebar) {
   mobileCloseSidebarBtn.addEventListener("click", () => {
-    sidebar.classList.remove("open");
-    document.body.style.overflow = "";
+    setSidebarVisibility(false);
   });
+}
+
+if (sidebarHideBtn) {
+  sidebarHideBtn.addEventListener('click', () => {
+    setSidebarVisibility(false);
+  });
+}
+
+window.addEventListener('resize', () => {
+  if (!isMobileViewport()) {
+    sidebar?.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+});
+
+if (isMobileViewport()) {
+  setSidebarVisibility(false);
+} else {
+  const startVisible = !(appLayout?.classList.contains('sidebar-collapsed'));
+  setSidebarVisibility(startVisible);
 }
 
 // --- Content Mode Button Logic ---
@@ -839,12 +1112,10 @@ function updateContentButtons() {
     }
 
     if (searchInput) {
-        if (searchMode.boardgames) {
-            searchInput.placeholder = 'Search games, designers, publishers…';
-        } else {
-            searchInput.placeholder = 'Search movies, actors, genres…';
-        }
+      syncSearchInputPlaceholder();
     }
+
+    updateSearchSummary();
 
     // 4. Render Providers
     const providersSection = document.getElementById('providers');
@@ -891,51 +1162,26 @@ function updateContentButtons() {
 
 if (btnMovies) {
   btnMovies.addEventListener('click', () => {
-    searchMode.boardgames = false;
-    if (searchMode.movies && searchMode.tvshows) {
-      searchMode.movies = false;
-    } else {
-      searchMode.movies = true;
-    }
-    if (!searchMode.movies && !searchMode.tvshows) searchMode.movies = true;
-    updateContentButtons();
-    loadPage(1);
+    switchToSection('movies');
   });
 }
 
 if (btnTVShows) {
   btnTVShows.addEventListener('click', () => {
-    searchMode.boardgames = false;
-    if (searchMode.tvshows && searchMode.movies) {
-      searchMode.tvshows = false;
-    } else {
-      searchMode.tvshows = true;
-    }
-    if (!searchMode.movies && !searchMode.tvshows) searchMode.tvshows = true;
-    updateContentButtons();
-    loadPage(1);
+    switchToSection('tvshows');
   });
 }
 
 if (btnBoardGames) {
   btnBoardGames.addEventListener('click', () => {
-    if (searchMode.boardgames) {
-        searchMode.boardgames = false;
-        searchMode.movies = true;
-        searchMode.tvshows = false;
-    } else {
-        searchMode.movies = false;
-        searchMode.tvshows = false;
-        searchMode.boardgames = true;
-    }
-    updateContentButtons();
-    loadPage(1);
+    switchToSection('boardgames');
   });
 }
 
 // Login/Logout button handlers
 const btnLogin = document.getElementById('btn-login');
 const btnLogout = document.getElementById('btn-logout');
+const themeToggleBtn = document.getElementById('theme-toggle-btn');
 
 if (btnLogin) {
   btnLogin.addEventListener('click', login);
@@ -943,6 +1189,10 @@ if (btnLogin) {
 
 if (btnLogout) {
   btnLogout.addEventListener('click', logout);
+}
+
+if (themeToggleBtn) {
+  themeToggleBtn.addEventListener('click', cycleThemeMode);
 }
 
 // Watchlist button handler
@@ -1079,6 +1329,7 @@ function displayWatchlistContent(tabType, watchlists, ratingsData, itemMetadata 
   
   let html = '<div style="padding: 16px;">';
   let contentTypeLabel = tabType === 'movie' ? 'Movie' : (tabType === 'tvshow' ? 'TV Show' : 'Board Game');
+  const modalContentType = tabType === 'tvshow' ? 'tvshow' : (tabType === 'boardgame' ? 'boardgame' : 'movie');
   let items = watchlists[tabType] || [];
   
   // WATCHLIST SECTION
@@ -1100,7 +1351,7 @@ function displayWatchlistContent(tabType, watchlists, ratingsData, itemMetadata 
         ? `background-image: url('${thumbnail}'); background-size: cover; background-position: center;`
         : `background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);`;
       
-      html += `<div style="display: flex; gap: 12px; padding: 12px; border: 1px solid #475569; border-radius: 8px; margin-bottom: 12px; align-items: flex-start;">
+      html += `<div class="watchlist-modal-item" data-item-id="${String(itemId)}" data-content-type="${modalContentType}" style="display: flex; gap: 12px; padding: 12px; border: 1px solid #475569; border-radius: 8px; margin-bottom: 12px; align-items: flex-start; cursor: pointer; transition: border-color 0.2s, background-color 0.2s;">
         <div style="width: 60px; height: 90px; min-width: 60px; border-radius: 4px; ${thumbnailStyle}; border: 1px solid #64748b;"></div>
         <div style="flex: 1;">
           <strong style="display: block;">${title}</strong><br>
@@ -1137,7 +1388,7 @@ function displayWatchlistContent(tabType, watchlists, ratingsData, itemMetadata 
         ? `background-image: url('${item.poster}'); background-size: cover; background-position: center;`
         : `background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);`;
       
-      html += `<div style="display: flex; gap: 12px; padding: 12px; border: 1px solid #475569; border-radius: 8px; margin-bottom: 12px; align-items: flex-start;">
+      html += `<div class="watchlist-modal-item" data-item-id="${String(item.id)}" data-content-type="${modalContentType}" style="display: flex; gap: 12px; padding: 12px; border: 1px solid #475569; border-radius: 8px; margin-bottom: 12px; align-items: flex-start; cursor: pointer; transition: border-color 0.2s, background-color 0.2s;">
         <div style="width: 60px; height: 90px; min-width: 60px; border-radius: 4px; ${posterStyle}; border: 1px solid #64748b;"></div>
         <div style="flex: 1;">
           <strong style="display: block; margin-bottom: 4px;">${item.title}</strong>
@@ -1152,6 +1403,26 @@ function displayWatchlistContent(tabType, watchlists, ratingsData, itemMetadata 
   console.log('[displayWatchlistContent] setting innerHTML, html length:', html.length);
   content.innerHTML = html;
   console.log('[displayWatchlistContent] innerHTML set successfully');
+
+  const clickItems = content.querySelectorAll('.watchlist-modal-item');
+  clickItems.forEach(el => {
+    el.addEventListener('mouseenter', () => {
+      el.style.borderColor = '#64748b';
+      el.style.backgroundColor = 'rgba(59, 130, 246, 0.08)';
+    });
+    el.addEventListener('mouseleave', () => {
+      el.style.borderColor = '#475569';
+      el.style.backgroundColor = 'transparent';
+    });
+    el.addEventListener('click', () => {
+      const itemId = el.getAttribute('data-item-id');
+      const contentType = el.getAttribute('data-content-type') || 'movie';
+      if (!itemId) return;
+
+      closeWatchlistModal();
+      openMovieModal(itemId, contentType);
+    });
+  });
 }
 
 // BGG Login/Logout button handlers
@@ -1492,6 +1763,7 @@ async function loadPage(page = 1) {
   console.log('[LoadPage] selectedProviders:', Array.from(selectedProviders));
 
   currentPage = page;
+  updateSearchSummary();
   const output = document.getElementById("output");
   const existingPagination = document.getElementById("pagination");
   if (existingPagination) existingPagination.remove();
@@ -1502,6 +1774,7 @@ async function loadPage(page = 1) {
   try {
     let results = [];
     let data;
+    const activeQuery = String(currentQuery || '').trim();
 
     // --- FIX: Only one of boardgames or (movies/tvshows) can be enabled ---
     if (searchMode.boardgames) {
@@ -1528,20 +1801,47 @@ async function loadPage(page = 1) {
       const genreFilters = selectedFilters.filter(f => f.type === 'genre' || f.type === 'category');
       const keywordFilters = selectedFilters.filter(f => f.type === 'keyword' || f.type === 'tag' || f.type === 'mechanic');
       const legacyTextFilters = selectedFilters.filter(f => f.type === 'text');
-      const nonPersonFilters = selectedFilters.filter(f => f.type !== 'person' && f.type !== 'movie_id');
+      const nonPersonFilters = selectedFilters.filter(f => f.type !== 'person' && f.type !== 'movie_id' && f.type !== 'boardgame_id');
 
       if (personFilters.length > 0) {
         console.log('[LoadPage][Boardgames] Ignoring person filters for boardgame search:', personFilters.map(f => f.name));
       }
 
       // Check if there's a specific boardgame ID filter (from autocomplete)
-      const movieIdFilter = selectedFilters.find(f => f.type === 'movie_id');
+      const boardgameIdFilter = selectedFilters.find(f => f.type === 'boardgame_id' || f.type === 'movie_id');
       
       const hasBoardgameFilterContext = genreFilters.length > 0 || keywordFilters.length > 0 || legacyTextFilters.length > 0 || nonPersonFilters.length > 0;
 
-      if (movieIdFilter && !hasBoardgameFilterContext) {
+      if (activeQuery.length > 0) {
+        const params = { content_types: "boardgames", query: activeQuery, page: String(currentPage), page_size: String(PAGE_SIZE) };
+        const normalizedGenres = uniqueNormalizedNames(genreFilters);
+        if (normalizedGenres.length > 0) {
+          params.genre = normalizedGenres.join(',');
+        }
+        const keywordFallbackFilters = nonPersonFilters.filter(f => f.type !== 'genre' && f.type !== 'category');
+        const allKeywordFilters = [...keywordFilters, ...legacyTextFilters, ...keywordFallbackFilters];
+        const normalizedKeywords = uniqueNormalizedNames(allKeywordFilters);
+        if (normalizedKeywords.length > 0) {
+          params.keywords = normalizedKeywords.join(',');
+        }
+
+        const dataBG = await astraApi("search", params);
+        results = (dataBG && dataBG.results) ? dataBG.results : [];
+        renderGrid(results);
+        renderPagination(
+          Number(dataBG?.page || currentPage),
+          Number(dataBG?.total_pages || 1),
+          Number(dataBG?.total_results ?? results.length),
+          !!dataBG?.has_more,
+          Number(dataBG?.estimated_total_results)
+        );
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+
+      if (boardgameIdFilter && !hasBoardgameFilterContext) {
         // Use search with specific ID
-        const params = { bgg_id: movieIdFilter.id, content_types: "boardgames", page: String(currentPage), page_size: String(PAGE_SIZE) };
+        const params = { bgg_id: boardgameIdFilter.id, content_types: "boardgames", page: String(currentPage), page_size: String(PAGE_SIZE) };
         const dataBG = await astraApi("search", params);
         results = (dataBG && dataBG.results) ? dataBG.results : [];
         renderGrid(results);
@@ -1595,19 +1895,23 @@ async function loadPage(page = 1) {
       return;
     }
 
-    // Movies and/or TV Shows (can be both)
-    const activeContentTypes = [];
-    if (searchMode.movies) activeContentTypes.push('movies');
-    if (searchMode.tvshows) activeContentTypes.push('tvshows');
-    if (activeContentTypes.length === 0) activeContentTypes.push('movies');
+    // Movies OR TV shows (single-section mode)
+    const contentTypesValue = searchMode.tvshows ? 'tvshows' : 'movies';
     
     // Check if there's a specific movie/show ID filter (from autocomplete)
     const movieIdFilter = selectedFilters.find(f => f.type === 'movie_id');
     const personFilters = selectedFilters.filter(f => f.type === 'person');
     const genreFilters = selectedFilters.filter(f => f.type === 'genre');
     const keywordFilters = selectedFilters.filter(f => f.type === 'keyword');
-    const hasFilters = personFilters.length > 0 || genreFilters.length > 0 || keywordFilters.length > 0;
-    const contentTypesValue = activeContentTypes.join(',');
+    const hasProviderFilters = selectedProviders.size > 0;
+    const hasFilters = personFilters.length > 0 || genreFilters.length > 0 || keywordFilters.length > 0 || hasProviderFilters;
+    const paymentTypes = [];
+    if (searchMode.stream) paymentTypes.push('stream');
+    if (searchMode.rentBuy) {
+      paymentTypes.push('rent');
+      paymentTypes.push('buy');
+    }
+    if (paymentTypes.length === 0) paymentTypes.push('stream');
     let dataCombined;
     
     if (movieIdFilter) {
@@ -1619,12 +1923,15 @@ async function loadPage(page = 1) {
       });
       results = dataCombined?.results || [];
     } else {
-      if (hasFilters) {
+      if (activeQuery.length > 0 || hasFilters) {
         const params = {
           content_types: contentTypesValue,
           page: String(currentPage),
           page_size: String(PAGE_SIZE)
         };
+        if (activeQuery.length > 0) {
+          params.query = activeQuery;
+        }
         if (personFilters.length > 0) {
           params.person = personFilters.map(f => f.id).join(',');
         }
@@ -1634,6 +1941,11 @@ async function loadPage(page = 1) {
         if (keywordFilters.length > 0) {
           params.keywords = keywordFilters.map(f => f.name).join(',');
         }
+        if (hasProviderFilters) {
+          // Providers are OR'ed in backend; this remains AND with person/genre/keyword filters.
+          params.providers = Array.from(selectedProviders).join(',');
+        }
+        params.payment_types = paymentTypes.join(',');
         dataCombined = await astraApi("search", params);
         results = dataCombined?.results || [];
       } else {
@@ -2138,9 +2450,9 @@ async function openMovieModal(movieId, contentType = 'movie') {
         providersHtml = `
           <table style="width:100%; border-collapse: collapse; margin-top:8px; font-size:13px;">
             <thead>
-              <tr style="border-bottom: 1px solid #475569; text-align:left;">
-                <th style="padding:8px 4px; font-weight:600; color:#cbd5e1;">Provider</th>
-                <th style="padding:8px 4px; font-weight:600; color:#cbd5e1;">Availability</th>
+              <tr style="border-bottom: 1px solid var(--border-soft); text-align:left;">
+                <th style="padding:8px 4px; font-weight:600; color:var(--text-main);">Provider</th>
+                <th style="padding:8px 4px; font-weight:600; color:var(--text-main);">Availability</th>
               </tr>
             </thead>
             <tbody>
@@ -2149,14 +2461,14 @@ async function openMovieModal(movieId, contentType = 'movie') {
                 const url = getProviderUrl(name);
                 const typeList = Array.from(types).sort().join(', ');
                 return `
-                  <tr class="provider-row" data-provider="${escapeHtml(name)}" style="border-bottom: 1px solid #334155;">
+                  <tr class="provider-row" data-provider="${escapeHtml(name)}" style="border-bottom: 1px solid var(--border-soft);">
                     <td style="padding:8px 4px;">
-                      <a href="${url}" target="_blank" rel="noopener noreferrer" style="display:flex; align-items:center; gap:8px; text-decoration:none; color:#e2e8f0;">
+                      <a href="${url}" target="_blank" rel="noopener noreferrer" style="display:flex; align-items:center; gap:8px; text-decoration:none; color:var(--text-main);">
                         ${logo ? `<img src="${logo}" alt="${escapeHtml(name)}" style="width:24px; height:24px; object-fit:contain; border-radius:4px;">` : ''}
                         <span style="font-weight:500;">${escapeHtml(name)}</span>
                       </a>
                     </td>
-                    <td style="padding:8px 4px; color:#94a3b8;">${typeList}</td>
+                    <td style="padding:8px 4px; color:var(--text-muted);">${typeList}</td>
                   </tr>
                 `;
               }).join("")}
@@ -2203,6 +2515,62 @@ async function openMovieModal(movieId, contentType = 'movie') {
       ).join("");
     }
 
+    const asNameList = (value) => {
+      if (!value) return [];
+      if (Array.isArray(value)) {
+        return value
+          .map(v => typeof v === 'object' ? (v.name || v.original_name || '') : String(v))
+          .map(v => String(v).trim())
+          .filter(Boolean);
+      }
+      if (typeof value === 'string') {
+        return value.split(',').map(v => v.trim()).filter(Boolean);
+      }
+      return [];
+    };
+
+    const crewDetails = Array.isArray(movie.crew_details)
+      ? movie.crew_details
+      : (Array.isArray(movie.credits?.crew) ? movie.credits.crew : []);
+
+    const directors = asNameList(
+      movie.directors ||
+      movie.director ||
+      crewDetails.filter(c => c?.job === 'Director').map(c => c?.name)
+    );
+
+    const writers = asNameList(
+      movie.writers ||
+      movie.writer ||
+      movie.screenplay ||
+      crewDetails.filter(c => c?.department === 'Writing' || c?.job === 'Writer' || c?.job === 'Screenplay' || c?.job === 'Story').map(c => c?.name)
+    );
+
+    const producers = asNameList(
+      movie.producers ||
+      movie.producer ||
+      crewDetails.filter(c => c?.department === 'Production' || c?.job === 'Producer' || c?.job === 'Executive Producer').map(c => c?.name)
+    );
+
+    const uniqueNames = (arr) => {
+      const seen = new Set();
+      return arr.filter(name => {
+        const key = String(name).toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+
+    const renderCrewPills = (names) => {
+      const pills = uniqueNames(names).slice(0, 8).map(name => `<span class="pill crew-pill" data-name="${escapeHtml(name)}">${escapeHtml(name)}</span>`).join('');
+      return pills || `<span class="subtle" style="font-size:12px;">Not available</span>`;
+    };
+
+    const directorsHtml = renderCrewPills(directors);
+    const writersHtml = renderCrewPills(writers);
+    const producersHtml = renderCrewPills(producers);
+
     modalBody.innerHTML = `
       <div class="poster">
         ${posterHtml}
@@ -2240,6 +2608,15 @@ async function openMovieModal(movieId, contentType = 'movie') {
         <div class="sectionTitle">Top Cast</div>
         <div style="margin-top:8px;">${castHtml}</div>
         ` : ''}
+
+        <div class="sectionTitle">Directors</div>
+        <div class="pillRow">${directorsHtml}</div>
+
+        <div class="sectionTitle">Writers</div>
+        <div class="pillRow">${writersHtml}</div>
+
+        <div class="sectionTitle">Producers</div>
+        <div class="pillRow">${producersHtml}</div>
 
         ${keywordsHtml ? `
         <div class="sectionTitle">Keywords</div>
@@ -2288,6 +2665,18 @@ async function openMovieModal(movieId, contentType = 'movie') {
       pill.addEventListener("click", () => {
         const keyword = pill.textContent;
         addFilter("keyword", keyword, keyword);
+        renderChips();
+        loadPage(1);
+        closeModal();
+      });
+    });
+
+    modalBody.querySelectorAll('.crew-pill').forEach(pill => {
+      pill.style.cursor = 'pointer';
+      pill.addEventListener('click', () => {
+        const personName = (pill.dataset.name || pill.textContent || '').trim();
+        if (!personName) return;
+        addFilter('person', personName, personName);
         renderChips();
         loadPage(1);
         closeModal();
@@ -2691,14 +3080,181 @@ async function loadBGGUserSection(gameId) {
   }
 }
 
+// ==================== GENAI CHAT ====================
+function initGenAIChat() {
+  const toggleBtn = document.getElementById('ai-chat-toggle');
+  const panel = document.getElementById('ai-chat-panel');
+  const closeBtn = document.getElementById('ai-chat-close');
+  const clearBtn = document.getElementById('ai-chat-clear');
+  const sendBtn = document.getElementById('ai-chat-send');
+  const input = document.getElementById('ai-chat-input');
+  const messagesEl = document.getElementById('ai-chat-messages');
+  const statusEl = document.getElementById('ai-chat-status');
+
+  if (!toggleBtn || !panel || !sendBtn || !input || !messagesEl || !statusEl) {
+    return;
+  }
+
+  let sending = false;
+  let chatHistory = [];
+
+  const setStatus = (text = '') => {
+    statusEl.textContent = text;
+  };
+
+  const scrollToBottom = () => {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  };
+
+  const openSourceItem = (source) => {
+    const sourceType = String(source?.type || '').toLowerCase();
+    const itemId = source?.id ?? source?._id ?? source?.bggid;
+
+    if (itemId == null || String(itemId).trim() === '') {
+      setStatus('Source item is missing an id');
+      return;
+    }
+
+    let modalType = 'movie';
+    if (sourceType === 'boardgame') {
+      modalType = 'boardgame';
+    } else if (sourceType === 'tv' || sourceType === 'tvshow') {
+      modalType = 'tvshow';
+    }
+
+    closePanel();
+    openMovieModal(String(itemId), modalType);
+  };
+
+  const appendMessage = (role, content, sources = []) => {
+    const bubble = document.createElement('div');
+    bubble.className = `aiChatBubble ${role}`;
+    bubble.textContent = content;
+
+    if (role === 'assistant' && Array.isArray(sources) && sources.length > 0) {
+      const sourceWrap = document.createElement('div');
+      sourceWrap.className = 'aiChatSources';
+
+      sources.slice(0, 6).forEach((source) => {
+        const badge = document.createElement('button');
+        badge.type = 'button';
+        badge.className = 'aiChatSource';
+        const label = `${source.type || 'item'}: ${source.title || source.id || 'unknown'}`;
+        badge.textContent = label;
+        badge.title = 'Open details';
+        badge.addEventListener('click', () => openSourceItem(source));
+        sourceWrap.appendChild(badge);
+      });
+
+      bubble.appendChild(sourceWrap);
+    }
+
+    messagesEl.appendChild(bubble);
+    scrollToBottom();
+  };
+
+  const openPanel = () => {
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+    input.focus();
+  };
+
+  const closePanel = () => {
+    panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+  };
+
+  const resetChat = () => {
+    chatHistory = [];
+    messagesEl.innerHTML = '';
+    appendMessage('assistant', 'Hi. Ask me about movies, TV shows, and board games from The Intersect data.');
+    setStatus('');
+  };
+
+  const sendChatMessage = async () => {
+    const text = String(input.value || '').trim();
+    if (!text || sending) return;
+
+    sending = true;
+    input.value = '';
+    input.style.height = '44px';
+
+    appendMessage('user', text);
+    setStatus('Thinking...');
+
+    const requestHistory = chatHistory.slice(-8);
+    chatHistory.push({ role: 'user', content: text });
+
+    try {
+      const response = await fetch(CHAT_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          history: requestHistory
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Chat request failed');
+      }
+
+      const answer = String(data?.answer || "I don't know based on current data.");
+      appendMessage('assistant', answer, data?.sources || []);
+      chatHistory.push({ role: 'assistant', content: answer });
+      setStatus('');
+    } catch (error) {
+      console.error('[AI Chat] Error:', error);
+      appendMessage('assistant', 'I could not complete that request right now. Please try again.');
+      setStatus('Chat error');
+    } finally {
+      sending = false;
+    }
+  };
+
+  input.addEventListener('input', () => {
+    input.style.height = '44px';
+    input.style.height = `${Math.min(input.scrollHeight, 110)}px`;
+  });
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendChatMessage();
+    }
+  });
+
+  sendBtn.addEventListener('click', sendChatMessage);
+  toggleBtn.addEventListener('click', () => {
+    if (panel.classList.contains('open')) {
+      closePanel();
+    } else {
+      openPanel();
+    }
+  });
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', closePanel);
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', resetChat);
+  }
+
+  resetChat();
+}
+
 // Initialize on page load - handle both cases (DOM ready or not)
 if (document.readyState === 'loading') {
   document.addEventListener("DOMContentLoaded", () => {
+    initGenAIChat();
     updateContentButtons();
     loadPage(1);
   });
 } else {
   // DOM already loaded, run immediately
+  initGenAIChat();
   updateContentButtons();
   loadPage(1);
 }
