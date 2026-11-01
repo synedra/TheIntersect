@@ -588,8 +588,7 @@ export async function handler(event) {
               // Query without sort to avoid exceeding sortable document limit, then sort in memory
               const boardgameFilter = {
                 average: { $gt: 7 },
-                boardgamerank: { $lte: 1000 },
-                usersrated: { $gte: 5000 },
+                boardgamerank: { $lte: 100 },
                 year: { $gte: minYear }  // Last 10 years
               };
               console.log(`[Discover] ${collInfo.name} - Query:`, boardgameFilter, `limit: ${limit * 4} (no sort - will sort in memory)`);
