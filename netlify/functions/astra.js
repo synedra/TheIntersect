@@ -70,7 +70,7 @@ async function generateEmbedding(text) {
 function getCollection(collInfo) {
   if (collInfo.keyspace) {
     const keyspaceEnvVar = collInfo.keyspace === 'boardgames' 
-      ? process.env.ASTRA_BOARDGAME_KEYSPACE 
+      ? (process.env.ASTRA_BOARDGAME_KEYSPACE || 'boardgames') 
       : collInfo.keyspace;
     
     const dbInstance = client.db(process.env.ASTRA_DB_API_ENDPOINT, { 
@@ -123,6 +123,40 @@ async function queryCollections(db, collections, finalFilter, searchQuery, limit
   return resultsArrays.flat();
 }
 
+async function countCollectionDocuments(collection, filter = {}, upperBound = 10000) {
+  try {
+    const count = await collection.countDocuments(filter, { upperBound });
+    return Number(count) || 0;
+  } catch (e) {
+    console.warn('[Count] Failed countDocuments, falling back to 0:', e?.message || e);
+    return 0;
+  }
+}
+
+async function countCollections(collections, filter = {}, upperBound = 10000) {
+  const counts = await Promise.all(
+    collections.map(async (collInfo) => {
+      try {
+        const collection = getCollection(collInfo);
+        return await countCollectionDocuments(collection, filter, upperBound);
+      } catch {
+        return 0;
+      }
+    })
+  );
+  return counts.reduce((sum, n) => sum + n, 0);
+}
+
+async function estimatedCollectionDocuments(collection) {
+  try {
+    const estimated = await collection.estimatedDocumentCount();
+    return Number(estimated) || 0;
+  } catch (e) {
+    console.warn('[Count] estimatedDocumentCount failed:', e?.message || e);
+    return 0;
+  }
+}
+
 export async function handler(event) {
   const qs = event.queryStringParameters || {};
   const action = qs.action;
@@ -146,20 +180,91 @@ export async function handler(event) {
     switch (action) {
       case "search": {
         let query = qs.query ? decodeURIComponent(qs.query) : "";
+        const page = Math.max(1, parseInt(qs.page, 10) || 1);
+        const pageSize = Math.min(50, Math.max(1, parseInt(qs.page_size || qs.limit, 10) || 20));
+        const offset = (page - 1) * pageSize;
+        const fetchLimit = Math.min(offset + pageSize + 1, 10000);
+
+        const buildPagedResponse = (items, explicitTotal = null) => {
+          const mapped = items.map(r => ({ ...r, id: r._id }));
+          const totalResults = explicitTotal != null ? Number(explicitTotal) : mapped.length;
+          const totalPages = Math.max(1, Math.ceil(totalResults / pageSize));
+          const start = offset;
+          const end = offset + pageSize;
+          const hasMore = page < totalPages;
+          const pageItems = mapped.slice(start, end);
+
+          return {
+            results: pageItems,
+            page,
+            page_size: pageSize,
+            total_results: totalResults,
+            total_pages: totalPages,
+            has_more: hasMore
+          };
+        };
         
         // Helper for splitting list params
-        const getList = (param) => param ? decodeURIComponent(param).split(',').map(s => s.trim()).filter(Boolean) : [];
+        const safeDecode = (value) => {
+          if (value == null) return "";
+          const text = String(value);
+          try {
+            return decodeURIComponent(text);
+          } catch {
+            // Tolerate malformed sequences like "%C" from client logs.
+            // Decode valid chunks only and keep the rest as literal text.
+            return text.replace(/%[0-9A-Fa-f]{2}/g, (m) => {
+              try {
+                return decodeURIComponent(m);
+              } catch {
+                return m;
+              }
+            });
+          }
+        };
+
+        const getList = (param) => {
+          if (!param) return [];
+          const decoded = safeDecode(param)
+            // tolerate malformed delimiter encodings seen in logs
+            .replace(/%2C/gi, ',')
+            .replace(/%0C/gi, ',')
+            .replace(/%C(?=[^0-9A-Fa-f]|$)/gi, ',')
+            .replace(/\u000c/g, ',');
+
+          return decoded
+            .split(/[;,]+/)
+            .map(s => String(s)
+              .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim())
+            .filter(Boolean);
+        };
 
         // Hoist variable declarations for cache checking
-        const movieIds = getList(qs.movie_id);
-        const bggIds = getList(qs.bgg_id).map(id => `bgg_${id}`);
-        const personList = getList(qs.person);
-        const genreList = getList(qs.genre);
-        const keywordList = getList(qs.keywords);
-        const languages = getList(qs.language);
-        const providers = getList(qs.providers);
+        const dedupeList = (arr) => {
+          const seen = new Set();
+          const out = [];
+          for (const value of arr) {
+            const normalized = String(value || '').trim();
+            if (!normalized) continue;
+            const key = normalized.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(normalized);
+          }
+          return out;
+        };
+
+        const movieIds = dedupeList(getList(qs.movie_id));
+        const bggIds = dedupeList(getList(qs.bgg_id)).map(id => `bgg_${id}`);
+        const personList = dedupeList(getList(qs.person));
+        const genreList = dedupeList(getList(qs.genre));
+        const keywordList = dedupeList(getList(qs.keywords));
+        const languages = dedupeList(getList(qs.language));
+        const providers = dedupeList(getList(qs.providers));
         const paymentTypes = getList(qs.payment_types || "stream");
-        const limit = parseInt(qs.limit) || 20;
+        const limit = fetchLimit;
 
         // NEW: Type filter (movie, person, genre)
         const typeFilter = qs.type_filter; // Expected values: "movie", "person", "genre"
@@ -169,7 +274,7 @@ export async function handler(event) {
 
         // Check for "bare genre search" cache hit
         // Conditions: No text query, no specific movie/person/keyword/language/provider filters, but Genres ARE selected.
-        const isBareGenre = genreList.length > 0 && 
+        const isBareGenre = !isBoardGameSearch && genreList.length > 0 && 
                             (!query || query.length < 2) && 
                             movieIds.length === 0 && 
                             personList.length === 0 && 
@@ -179,11 +284,11 @@ export async function handler(event) {
 
         let genreCacheKey = null;
         if (isBareGenre) {
-            genreCacheKey = `genre:${genreList.sort().join('|')}:${contentTypes.sort().join('|')}:${paymentTypes.sort().join('|')}:${limit}`;
+          genreCacheKey = `genre:${genreList.sort().join('|')}:${contentTypes.sort().join('|')}:${paymentTypes.sort().join('|')}:${page}:${pageSize}`;
             const now = Date.now();
             if (genreCache[genreCacheKey] && (now - genreCache[genreCacheKey].timestamp < 3600000)) { // 1 hour TTL
                 console.log(`[Cache] Serving genre search from cache: ${genreCacheKey}`);
-                return { statusCode: 200, body: JSON.stringify({ results: genreCache[genreCacheKey].data }) };
+            return { statusCode: 200, body: JSON.stringify(genreCache[genreCacheKey].data) };
             }
         }
 
@@ -247,28 +352,50 @@ export async function handler(event) {
                          
                          // Sort by similarity and return top results
                          similarResults.sort((a, b) => (b.$similarity || 0) - (a.$similarity || 0));
-                         return { statusCode: 200, body: JSON.stringify({ 
-                             results: similarResults.slice(0, limit).map(r => ({...r, id: r._id})) 
-                         }) };
+                         return { statusCode: 200, body: JSON.stringify(buildPagedResponse(similarResults, similarResults.length)) };
                      }
                  }
                  
                  // Default behavior: return only the exact match
-                 return { statusCode: 200, body: JSON.stringify({ results: results.map(r => ({...r, id: r._id})) }) }; 
+                       return { statusCode: 200, body: JSON.stringify(buildPagedResponse(results, results.length)) }; 
              }
         }
         
         const filterConditions = [];
+        const getTextVariants = (value) => {
+          const base = String(value || '').trim();
+          if (!base) return [];
+
+          const titleCase = base
+            .toLowerCase()
+            .split(/\s+/)
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+
+          return Array.from(new Set([
+            base,
+            base.toLowerCase(),
+            base.toUpperCase(),
+            titleCase
+          ]));
+        };
 
         // Board game specific filtering
         if (isBoardGameSearch) {
             // For board games, genres map to categories
             genreList.forEach(cat => {
-                // Search across all category fields
-                const categoryConditions = [];
-                for (let i = 0; i < 10; i++) {
-                    categoryConditions.push({ [`category${i}`]: cat });
-                }
+            const variants = getTextVariants(cat);
+            if (variants.length === 0) return;
+
+            // Primary schema is comma-separated categories strings.
+            // Keep only a small indexed fallback set to avoid Data API filter-field limits.
+            const categoryConditions = [
+              { categories: { $in: variants } },
+              { boardgamecategory: { $in: variants } }
+            ];
+            for (let i = 0; i < 3; i++) {
+              categoryConditions.push({ [`category${i}`]: { $in: variants } });
+            }
                 if (categoryConditions.length > 0) {
                     filterConditions.push({ $or: categoryConditions });
                 }
@@ -276,10 +403,22 @@ export async function handler(event) {
             
             // Keywords map to mechanics for board games
             keywordList.forEach(mech => {
-                const mechanicConditions = [];
-                for (let i = 0; i < 10; i++) {
-                    mechanicConditions.push({ [`mechanic${i}`]: mech });
-                }
+            const variants = getTextVariants(mech);
+            if (variants.length === 0) return;
+
+            const mechanicConditions = [
+              { mechanics: { $in: variants } },
+                { boardgamemechanic: { $in: variants } },
+                { designers: { $in: variants } },
+                { publishers: { $in: variants } },
+                { artists: { $in: variants } }
+            ];
+            for (let i = 0; i < 3; i++) {
+              mechanicConditions.push({ [`mechanic${i}`]: { $in: variants } });
+                mechanicConditions.push({ [`designer${i}`]: { $in: variants } });
+                mechanicConditions.push({ [`publisher${i}`]: { $in: variants } });
+                mechanicConditions.push({ [`artist${i}`]: { $in: variants } });
+            }
                 if (mechanicConditions.length > 0) {
                     filterConditions.push({ $or: mechanicConditions });
                 }
@@ -288,7 +427,17 @@ export async function handler(event) {
             // Movie/TV filtering (existing logic)
             personList.forEach(p => filterConditions.push({ cast: p }));
             genreList.forEach(g => filterConditions.push({ genres: g }));
-            keywordList.forEach(k => filterConditions.push({ "keywords.name": k }));
+          keywordList.forEach(k => {
+            const variants = getTextVariants(k);
+            if (variants.length === 0) return;
+
+            filterConditions.push({
+              $or: [
+                { "keywords.name": { $in: variants } }, // keywords as objects: [{name: "..."}]
+                { keywords: { $in: variants } }           // keywords as strings: ["..."]
+              ]
+            });
+          });
             
             if (personList.length === 1 || genreList.length === 1 || keywordList.length === 1) {
                  filterConditions.push({ vote_average: { $gt: 7 } });
@@ -338,8 +487,12 @@ export async function handler(event) {
                  
                  try {
                      const coll = getCollection(c);
-                     // Search for movies/TV with ANY of the people in the cast array
-                     const query = { cast: { $in: personList } };
+               // Enforce AND semantics across multiple selected people
+               // - single person: exact cast match check
+               // - multiple people: require all selected people in cast array
+               const query = personList.length === 1
+                 ? { cast: personList[0] }
+                 : { cast: { $all: personList } };
                      const docs = await coll.find(query, { limit }).toArray();
                      docs.forEach(d => { d.content_type = c.type; castResults.push(d); });
                  } catch(e){
@@ -350,9 +503,11 @@ export async function handler(event) {
              if (castResults.length > 0) {
                  // Sort by popularity
                  castResults.sort((a, b) => (Number(b.popularity) || 0) - (Number(a.popularity) || 0));
-                 return { statusCode: 200, body: JSON.stringify({ results: castResults.map(r => ({...r, id: r._id})) }) };
+               return { statusCode: 200, body: JSON.stringify(buildPagedResponse(castResults, castResults.length)) };
              }
         }
+
+          let totalResults = 0;
 
         if (query && query.length >= 2) {
              
@@ -409,16 +564,17 @@ export async function handler(event) {
                          const seen = new Set();
                          merged.sort((a,b) => b.sortScore - a.sortScore);
                          for(const r of merged) {
-                             if(!seen.has(r._id)) { seen.add(r._id); unique.push({...r, id: r._id}); }
+                           if(!seen.has(r._id)) { seen.add(r._id); unique.push(r); }
                          }
-                         searchResults = unique.slice(0, limit);
+                         searchResults = unique;
                          
-                         return { statusCode: 200, body: JSON.stringify({ results: searchResults }) };
+                         totalResults = unique.length;
+                         return { statusCode: 200, body: JSON.stringify(buildPagedResponse(searchResults, totalResults)) };
                      }
                  }
                  
                  // Default: return ONLY exact matches
-                 return { statusCode: 200, body: JSON.stringify({ results: exactMatches.map(r => ({...r, id: r._id})) }) };
+                       return { statusCode: 200, body: JSON.stringify(buildPagedResponse(exactMatches, exactMatches.length)) };
              }
 
              const queryEmbedding = await generateEmbedding(query);
@@ -430,9 +586,10 @@ export async function handler(event) {
              const seen = new Set();
              merged.sort((a,b) => b.sortScore - a.sortScore);
              for(const r of merged) {
-                 if(!seen.has(r._id)) { seen.add(r._id); unique.push({...r, id: r._id}); }
+               if(!seen.has(r._id)) { seen.add(r._id); unique.push(r); }
              }
-             searchResults = unique.slice(0, limit);
+             searchResults = unique;
+             totalResults = unique.length;
         } else {
              // Logic for FILTERED searches (e.g. Genre="Action", Provider="Netflix")
              
@@ -441,8 +598,11 @@ export async function handler(event) {
 
              // Only apply optimizations if we actually have filters
              if (Object.keys(finalFilter).length > 0) {
-                 // 1. Always sort filtered results by popularity
+               // 1. Sort filtered movie/tv results by popularity.
+               //    Board games don't have a reliable popularity field here.
+               if (!isBoardGameSearch) {
                  searchOptions.sort = { popularity: -1 };
+               }
              }
              
              searchResults = await queryCollections(db, collections, effectiveFilter, searchOptions, limit);
@@ -454,11 +614,68 @@ export async function handler(event) {
                  searchResults.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
              }
              
-             // Trim to limit after sorting
-             searchResults = searchResults.slice(0, limit);
+               // Keep enough rows for requested page; paging applied below
+               searchResults = searchResults.slice(0, limit);
+
+                 totalResults = await countCollections(collections, effectiveFilter, 10000);
+        }
+
+        // Boardgame guardrail: Data API $in on mixed string/array schemas can over-match.
+        // Apply strict in-memory validation so selected category/keyword pills are always honored.
+        if (isBoardGameSearch && (genreList.length > 0 || keywordList.length > 0)) {
+          const normalize = (s) => String(s || '').trim().toLowerCase();
+
+          const splitCsv = (value) => {
+            if (!value) return [];
+            if (Array.isArray(value)) return value.map(v => String(v));
+            return String(value)
+              .split(',')
+              .map(v => v.trim())
+              .filter(Boolean);
+          };
+
+          const getCategoryValues = (item) => {
+            const out = [];
+            out.push(...splitCsv(item.categories));
+            out.push(...splitCsv(item.boardgamecategory));
+            for (let i = 0; i < 10; i++) {
+              if (item[`category${i}`]) out.push(String(item[`category${i}`]));
+            }
+            return out;
+          };
+
+          const getMechanicValues = (item) => {
+            const out = [];
+            out.push(...splitCsv(item.mechanics));
+            out.push(...splitCsv(item.boardgamemechanic));
+            out.push(...splitCsv(item.designers));
+            out.push(...splitCsv(item.publishers));
+            out.push(...splitCsv(item.artists));
+            for (let i = 0; i < 10; i++) {
+              if (item[`mechanic${i}`]) out.push(String(item[`mechanic${i}`]));
+              if (item[`designer${i}`]) out.push(String(item[`designer${i}`]));
+              if (item[`publisher${i}`]) out.push(String(item[`publisher${i}`]));
+              if (item[`artist${i}`]) out.push(String(item[`artist${i}`]));
+            }
+            return out;
+          };
+
+          searchResults = searchResults.filter(item => {
+            const categorySet = new Set(getCategoryValues(item).map(normalize));
+            const mechanicSet = new Set(getMechanicValues(item).map(normalize));
+
+            const categoriesMatch = genreList.every(g => categorySet.has(normalize(g)));
+            const mechanicsMatch = keywordList.every(k => mechanicSet.has(normalize(k)));
+
+            return categoriesMatch && mechanicsMatch;
+          });
         }
         
-        const resultsResponse = searchResults.map(r => ({...r, id: r._id}));
+        if (totalResults === 0) {
+          totalResults = searchResults.length;
+        }
+
+        const resultsResponse = buildPagedResponse(searchResults, totalResults);
 
         // Cache if this was a bare genre search
         if (genreCacheKey) {
@@ -469,7 +686,7 @@ export async function handler(event) {
              console.log(`[Cache] Updated genre cache for key: ${genreCacheKey}`);
         }
 
-        return { statusCode: 200, body: JSON.stringify({ results: resultsResponse }) };
+        return { statusCode: 200, body: JSON.stringify(resultsResponse) };
       }
 
       case "details": {
@@ -550,9 +767,12 @@ export async function handler(event) {
 
       case "discover": {
         const discoverStartTime = Date.now();
-        const limit = parseInt(qs.limit) || 20;
+        const page = Math.max(1, parseInt(qs.page, 10) || 1);
+        const pageSize = Math.min(50, Math.max(1, parseInt(qs.page_size || qs.limit, 10) || 20));
+        const offset = (page - 1) * pageSize;
+        const fetchLimit = Math.min(offset + pageSize + 1, 10000);
 
-        const cacheKey = `discover:${contentTypes.sort().join(',')}:${limit}`;
+        const cacheKey = `discover:${contentTypes.sort().join(',')}:${page}:${pageSize}`;
         const now = Date.now();
         const TTL = 60 * 1000; // 1 minute cache for testing
         if (discoverCache[cacheKey] && (now - discoverCache[cacheKey].timestamp < TTL)) {
@@ -560,26 +780,21 @@ export async function handler(event) {
             return { statusCode: 200, body: JSON.stringify(discoverCache[cacheKey].data) };
         }
 
-        const minPopularity = collections.length > 1 ? 100 : 75;
-
-        // Date constraint: Last 10 years for movies/TV (YYYY-MM-DD format)
-        const tenYearsAgo = new Date();
-        tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
-        const minDate = tenYearsAgo.toISOString().split('T')[0]; // "YYYY-MM-DD"
-
-        // Year constraint for board games
-        const minYear = tenYearsAgo.getFullYear();
+        const minPopularity = 25;
 
         const allResults = [];
+        let totalResults = 0;
+        let estimatedTotalResults = 0;
 
         console.log(`[Discover] Starting query for ${collections.length} collections:`, collections.map(c => c.name));
-        console.log(`[Discover] Parameters - limit: ${limit}, minPopularity: ${minPopularity}, minDate: ${minDate}, minYear: ${minYear}`);
+        console.log(`[Discover] Parameters - page: ${page}, pageSize: ${pageSize}, fetchLimit: ${fetchLimit}, minPopularity: ${minPopularity}`);
 
         for (const collInfo of collections) {
           const startTime = Date.now();
           try {
             const collection = getCollection(collInfo);
             let results;
+            estimatedTotalResults += await estimatedCollectionDocuments(collection);
 
             console.log(`[Discover] Starting ${collInfo.name} (type: ${collInfo.type}) at ${new Date().toISOString()}`);
 
@@ -588,11 +803,11 @@ export async function handler(event) {
               // Query without sort to avoid exceeding sortable document limit, then sort in memory
               const boardgameFilter = {
                 average: { $gt: 7 },
-                usersrated: { $gte: 1000 },
-                year: { $gte: minYear }  // Last 10 years
+                usersrated: { $gte: 1000 }
               };
-              console.log(`[Discover] ${collInfo.name} - Query:`, boardgameFilter, `limit: ${limit * 4} (no sort - will sort in memory)`);
-              results = await collection.find(boardgameFilter, { limit: limit * 4 }).toArray();
+              const boardgameFetchLimit = Math.min(fetchLimit * 4, 10000);
+              console.log(`[Discover] ${collInfo.name} - Query:`, boardgameFilter, `limit: ${boardgameFetchLimit} (no sort - will sort in memory)`);
+              results = await collection.find(boardgameFilter, { limit: boardgameFetchLimit }).toArray();
               console.log(`[Discover] ${collInfo.name} - Query completed in ${Date.now() - startTime}ms, returned ${results.length} results`);
 
               // Ensure each result has bggid as id
@@ -603,12 +818,12 @@ export async function handler(event) {
             } else if (collInfo.type === 'tv') {
               // TV shows: Query without sort to avoid timeout (no index on popularity), then sort in memory
               const tvFilter = {
-                popularity: { $gte: minPopularity },
-                first_air_date: { $gte: minDate }  // Last 10 years
+                popularity: { $gte: minPopularity }
               };
-              console.log(`[Discover] ${collInfo.name} - Query:`, tvFilter, `limit: ${limit * 4} (no sort - will sort in memory)`);
+              const tvFetchLimit = Math.min(fetchLimit * 4, 10000);
+              console.log(`[Discover] ${collInfo.name} - Query:`, tvFilter, `limit: ${tvFetchLimit} (no sort - will sort in memory)`);
               const queryStartTime = Date.now();
-              results = await collection.find(tvFilter, { limit: limit * 4 }).toArray();
+              results = await collection.find(tvFilter, { limit: tvFetchLimit }).toArray();
               const queryDuration = Date.now() - queryStartTime;
               console.log(`[Discover] ${collInfo.name} - Query completed in ${queryDuration}ms, returned ${results.length} results`);
 
@@ -621,12 +836,12 @@ export async function handler(event) {
             } else {
               // Movies: Use sort in query (has proper index on popularity)
               const movieFilter = {
-                popularity: { $gte: minPopularity },
-                release_date: { $gte: minDate }  // Last 10 years
+                popularity: { $gte: minPopularity }
               };
-              console.log(`[Discover] ${collInfo.name} - Query:`, movieFilter, `sort: { popularity: -1 }, limit: ${limit * 2}`);
+              const movieFetchLimit = Math.min(fetchLimit * 2, 10000);
+              console.log(`[Discover] ${collInfo.name} - Query:`, movieFilter, `sort: { popularity: -1 }, limit: ${movieFetchLimit}`);
               const queryStartTime = Date.now();
-              results = await collection.find(movieFilter, { sort: { popularity: -1 }, limit: limit * 2 }).toArray();
+              results = await collection.find(movieFilter, { sort: { popularity: -1 }, limit: movieFetchLimit }).toArray();
               const queryDuration = Date.now() - queryStartTime;
               console.log(`[Discover] ${collInfo.name} - Query completed in ${queryDuration}ms, returned ${results.length} results`);
 
@@ -652,14 +867,34 @@ export async function handler(event) {
 
         console.log(`[Discover] All collections queried. Total results before sorting: ${allResults.length}`);
         
-        // Sort all results by their respective rating metric (descending)
-        allResults.sort((a, b) => {
-          const aScore = a.popularity || a.average || 0;
-          const bScore = b.popularity || b.average || 0;
-          return bScore - aScore;
-        });
+        // Keep boardgame-only discover ordering as-is (already sorted by usersrated).
+        // For mixed/movie/tv responses, keep global score sort.
+        const isBoardgameOnlyDiscover = collections.length === 1 && collections[0].type === 'boardgame';
+        if (!isBoardgameOnlyDiscover) {
+          allResults.sort((a, b) => {
+            const aScore = a.popularity || a.average || 0;
+            const bScore = b.popularity || b.average || 0;
+            return bScore - aScore;
+          });
+        }
         
-        const responseData = { results: allResults.slice(0, limit).map(r => ({...r, id: r.bggid || r._id})) };
+        const start = offset;
+        const end = offset + pageSize;
+        // Exact countDocuments calls are too expensive for broad discover filters.
+        // Use estimated collection totals for stable, scalable paging metadata.
+        totalResults = estimatedTotalResults || allResults.length;
+        const totalPages = Math.max(1, Math.ceil(totalResults / pageSize));
+        const hasMore = page < totalPages;
+
+        const responseData = {
+          results: allResults.slice(start, end).map(r => ({...r, id: r.bggid || r._id})),
+          page,
+          page_size: pageSize,
+          total_results: totalResults,
+          estimated_total_results: estimatedTotalResults,
+          total_pages: totalPages,
+          has_more: hasMore
+        };
 
         discoverCache[cacheKey] = {
             timestamp: now,

@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "netlify:dev": "netlify dev"
+    "netlify:dev": "netlify dev",
+    "test:tmdb-auth": "node bin/test_tmdb_auth.js"
   },
   "devDependencies": {
     "adm-zip": "^0.5.16",

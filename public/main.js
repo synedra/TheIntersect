@@ -2,6 +2,209 @@
 const TMDB_AUTH_API = "/.netlify/functions/tmdb_auth";
 const BGG_AUTH_API = "/.netlify/functions/bgg_auth";
 const USER_DATA_API = "/.netlify/functions/user_data";
+const TMDB_PENDING_REQUEST_TOKEN_KEY = "tmdb_pending_request_token";
+const TMDB_PENDING_REQUEST_TOKEN_EXPIRES_KEY = "tmdb_pending_request_token_expires";
+
+const AUTH_DEBUG_VERBOSE = true;
+
+function headersToObject(headers) {
+  try {
+    return Object.fromEntries(headers.entries());
+  } catch {
+    return {};
+  }
+}
+
+async function authFetchWithDebug(label, url, options = {}) {
+  const method = options.method || 'GET';
+  const normalizedHeaders = { ...(options.headers || {}) };
+  const body = options.body ?? null;
+
+  if (!normalizedHeaders.Accept) {
+    normalizedHeaders.Accept = 'application/json, text/plain, */*';
+  }
+  if (body != null && !normalizedHeaders['Content-Type']) {
+    normalizedHeaders['Content-Type'] = 'application/json';
+  }
+
+  const fetchOptions = {
+    ...options,
+    headers: normalizedHeaders
+  };
+
+  if (AUTH_DEBUG_VERBOSE) {
+    console.log(`[AUTH DEBUG][${label}] REQUEST`, {
+      url,
+      method,
+      headers: normalizedHeaders,
+      body,
+      location: window.location.href,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  const response = await fetch(url, fetchOptions);
+  const responseText = await response.text();
+  const responseHeaders = headersToObject(response.headers);
+
+  if (AUTH_DEBUG_VERBOSE) {
+    console.log(`[AUTH DEBUG][${label}] RESPONSE`, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+      body: responseText,
+      redirected: response.redirected,
+      finalUrl: response.url,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  let data;
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch (e) {
+    data = { _parseError: e.message, _raw: responseText };
+  }
+
+  return { response, data, text: responseText };
+}
+
+function clearTmdbSessionState() {
+  localStorage.removeItem("tmdb_session_id");
+  localStorage.removeItem("user_id");
+  localStorage.removeItem("tmdb_account_id");
+  localStorage.removeItem("tmdb_username");
+  localStorage.removeItem(TMDB_PENDING_REQUEST_TOKEN_KEY);
+  localStorage.removeItem(TMDB_PENDING_REQUEST_TOKEN_EXPIRES_KEY);
+}
+
+function isTmdbSessionInvalid(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+
+  const statusCode = Number(payload.status_code);
+  const message = String(payload.status_message || '').toLowerCase();
+
+  if (payload.success === false && [3, 7, 30].includes(statusCode)) return true;
+  if (payload.success === false && message.includes('session')) return true;
+  if (payload.success === false && message.includes('authentication failed')) return true;
+
+  return false;
+}
+
+async function requestNewTmdbSession(reason = 'unknown') {
+  console.warn(`[AUTH DEBUG][reauth] Requesting new session token. reason=${reason}`);
+
+  clearTmdbSessionState();
+
+  const { data } = await authFetchWithDebug(
+    'reauth:request_token',
+    `${TMDB_AUTH_API}?action=request_token`
+  );
+
+  if (data?.success && data?.request_token) {
+    localStorage.setItem(TMDB_PENDING_REQUEST_TOKEN_KEY, String(data.request_token));
+    if (data.expires_at) {
+      localStorage.setItem(TMDB_PENDING_REQUEST_TOKEN_EXPIRES_KEY, String(data.expires_at));
+    }
+
+    // Always use a clean callback URL to avoid stale query param contamination
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const authUrl = isLocalhost
+      ? `https://www.themoviedb.org/authenticate/${data.request_token}`
+      : `https://www.themoviedb.org/authenticate/${data.request_token}?redirect_to=${encodeURIComponent(redirectTo)}`;
+
+    const probeUrl = `${TMDB_AUTH_API}?action=debug_authenticate_probe&request_token=${encodeURIComponent(data.request_token)}&redirect_to=${encodeURIComponent(redirectTo)}`;
+    const { data: probeData } = await authFetchWithDebug('reauth:authenticate_probe', probeUrl);
+    const probe = probeData?.probe;
+
+    console.log('[AUTH DEBUG][reauth] Generated request token', {
+      request_token: data.request_token,
+      expires_at: data.expires_at,
+      redirect_to: redirectTo,
+      localhost_mode_no_redirect: isLocalhost,
+      auth_url: authUrl,
+      probe_status: probe?.status,
+      probe_status_text: probe?.statusText,
+      probe_headers: probe?.headers,
+      probe_body: probe?.body,
+      reason
+    });
+
+    if (probe && Number(probe.status) >= 400) {
+      // IMPORTANT: this probe runs server-side (no browser TMDB cookies),
+      // so 401/403 here does not necessarily mean the browser redirect will fail.
+      console.warn('[AUTH DEBUG][reauth] TMDB authenticate probe returned non-2xx; continuing with browser redirect', {
+        status: probe.status,
+        statusText: probe.statusText,
+        headers: probe.headers,
+        body: probe.body
+      });
+    }
+
+    if (isLocalhost) {
+      window.open(authUrl, '_blank', 'noopener,noreferrer');
+      alert('Opened TMDB approval in a new tab (no redirect_to to avoid CloudFront 403 locally). After approving, come back and click Login again to complete session creation.');
+      return true;
+    }
+
+    window.location.href = authUrl;
+    return true;
+  }
+
+  return false;
+}
+
+async function finalizeTmdbSession(sessionId, source = 'unknown') {
+  localStorage.setItem("tmdb_session_id", sessionId);
+
+  const { data: accountData } = await authFetchWithDebug(
+    `${source}:get_account`,
+    `${TMDB_AUTH_API}?action=get_account&session_id=${encodeURIComponent(sessionId)}`
+  );
+
+  if (accountData?.id) {
+    const userId = `tmdb_${accountData.id}`;
+    localStorage.setItem("user_id", userId);
+    localStorage.setItem("tmdb_account_id", String(accountData.id));
+    localStorage.setItem("tmdb_username", accountData.username || accountData.name || "User");
+
+    console.log(`[Login] User authenticated: ${userId} (${accountData.username})`);
+  } else {
+    console.error("Failed to get account details", accountData);
+  }
+
+  localStorage.removeItem(TMDB_PENDING_REQUEST_TOKEN_KEY);
+  localStorage.removeItem(TMDB_PENDING_REQUEST_TOKEN_EXPIRES_KEY);
+
+  const newUrl = `${window.location.origin}${window.location.pathname}`;
+  window.history.replaceState({}, document.title, newUrl);
+  await updateUI();
+}
+
+async function tryCreateSessionFromPendingToken(reason = 'unknown') {
+  const pendingToken = localStorage.getItem(TMDB_PENDING_REQUEST_TOKEN_KEY);
+  if (!pendingToken) return false;
+
+  console.log('[AUTH DEBUG][pending-token] Attempting create_session with stored pending token', {
+    reason,
+    pendingToken,
+    expiresAt: localStorage.getItem(TMDB_PENDING_REQUEST_TOKEN_EXPIRES_KEY)
+  });
+
+  const { data } = await authFetchWithDebug(`${reason}:create_session_from_pending`, `${TMDB_AUTH_API}?action=create_session`, {
+    method: 'POST',
+    body: JSON.stringify({ request_token: pendingToken })
+  });
+
+  if (data?.success && data?.session_id) {
+    await finalizeTmdbSession(data.session_id, `${reason}:pending`);
+    return true;
+  }
+
+  console.warn('[AUTH DEBUG][pending-token] create_session failed', data);
+  return false;
+}
 
 // Toast notification
 function showToast(message) {
@@ -56,6 +259,7 @@ document.head.appendChild(spinnerStyle);
 
 const updateUI = async () => {
   const sessionId = localStorage.getItem("tmdb_session_id");
+  const accountId = localStorage.getItem("tmdb_account_id");
   const btnLogin = document.getElementById("btn-login");
   const btnLogout = document.getElementById("btn-logout");
   const userProfile = document.getElementById("user-profile");
@@ -63,13 +267,18 @@ const updateUI = async () => {
   if (sessionId) {
     // Fetch account details
     try {
-        const res = await fetch(`${TMDB_AUTH_API}?action=get_account&session_id=${sessionId}`);
-        const user = await res.json();
-        
-        if (user.success === false) {
-             // Session invalid
-             localStorage.removeItem("tmdb_session_id");
-             updateUI();
+        const { data: user } = await authFetchWithDebug(
+          "updateUI:get_account",
+          `${TMDB_AUTH_API}?action=get_account&session_id=${encodeURIComponent(sessionId)}${accountId ? `&account_id=${encodeURIComponent(accountId)}` : ''}`
+        );
+
+        if (isTmdbSessionInvalid(user)) {
+             const redirected = await requestNewTmdbSession('updateUI:get_account invalid session');
+             if (!redirected) {
+               // Fallback: stay logged out if token request failed
+               clearTmdbSessionState();
+               updateUI();
+             }
              return;
         }
 
@@ -113,12 +322,13 @@ const updateUI = async () => {
 
 const login = async () => {
   try {
-      const res = await fetch(`${TMDB_AUTH_API}?action=request_token`);
-      const data = await res.json();
-      if (data.success && data.request_token) {
-          window.location.href = `https://www.themoviedb.org/authenticate/${data.request_token}?redirect_to=${window.location.href}`;
-      } else {
-          console.error("Failed to get request token", data);
+      const completedFromPending = await tryCreateSessionFromPendingToken('manual-login');
+      if (completedFromPending) {
+        return;
+      }
+
+      const redirected = await requestNewTmdbSession('manual login click');
+      if (!redirected) {
           alert("Login failed: Could not get request token.");
       }
   } catch (e) {
@@ -131,7 +341,7 @@ const logout = async () => {
   const sessionId = localStorage.getItem("tmdb_session_id");
   if (sessionId) {
       try {
-        await fetch(`${TMDB_AUTH_API}?action=logout`, {
+        await authFetchWithDebug("logout", `${TMDB_AUTH_API}?action=logout`, {
             method: "POST",
             body: JSON.stringify({ session_id: sessionId })
         });
@@ -150,44 +360,51 @@ const logout = async () => {
 
 const handleTmdbCallback = async () => {
     const params = new URLSearchParams(window.location.search);
-    const requestToken = params.get("request_token");
+    const requestTokens = params.getAll("request_token");
+    const requestToken = requestTokens.length > 0 ? requestTokens[requestTokens.length - 1] : null;
     const approved = params.get("approved");
+    const expectedToken = localStorage.getItem(TMDB_PENDING_REQUEST_TOKEN_KEY);
+
+    if (AUTH_DEBUG_VERBOSE) {
+      console.log('[AUTH DEBUG][callback] URL params received', {
+        full_url: window.location.href,
+        request_tokens: requestTokens,
+        selected_request_token: requestToken,
+        approved,
+        expected_token: expectedToken,
+        expected_expires_at: localStorage.getItem(TMDB_PENDING_REQUEST_TOKEN_EXPIRES_KEY)
+      });
+    }
 
     if (requestToken && approved === "true") {
         try {
+            if (expectedToken && expectedToken !== requestToken) {
+              console.warn('[AUTH DEBUG][callback] Request token mismatch detected', {
+                expectedToken,
+                callbackToken: requestToken
+              });
+            }
+
             // Step 1: Create session
-            const res = await fetch(`${TMDB_AUTH_API}?action=create_session`, {
+        const { data } = await authFetchWithDebug("callback:create_session", `${TMDB_AUTH_API}?action=create_session`, {
                 method: "POST",
                 body: JSON.stringify({ request_token: requestToken })
             });
-            const data = await res.json();
 
             if (data.success && data.session_id) {
-                const sessionId = data.session_id;
-                localStorage.setItem("tmdb_session_id", sessionId);
-
-                // Step 2: Get account details
-                const accountRes = await fetch(`${TMDB_AUTH_API}?action=get_account&session_id=${sessionId}`);
-                const accountData = await accountRes.json();
-
-                if (accountData.id) {
-                    // Store user data for intersect_users collection
-                    const userId = `tmdb_${accountData.id}`;
-                    localStorage.setItem("user_id", userId);
-                    localStorage.setItem("tmdb_account_id", String(accountData.id));
-                    localStorage.setItem("tmdb_username", accountData.username || accountData.name || "User");
-
-                    console.log(`[Login] User authenticated: ${userId} (${accountData.username})`);
-                } else {
-                    console.error("Failed to get account details", accountData);
-                }
-
-                // Clean URL
-                const newUrl = window.location.origin + window.location.pathname;
-                window.history.replaceState({}, document.title, newUrl);
-                await updateUI();
+              await finalizeTmdbSession(data.session_id, 'callback');
             } else {
                 console.error("Failed to create session", data);
+
+                const statusCode = Number(data?.status_code);
+                if ([17, 33, 41].includes(statusCode)) {
+                  console.warn('[AUTH DEBUG][callback] Session creation failed due to invalid/unapproved token. Requesting fresh token.', {
+                    status_code: statusCode,
+                    status_message: data?.status_message
+                  });
+                  await requestNewTmdbSession(`callback:create_session status_code=${statusCode}`);
+                  return;
+                }
             }
         } catch (e) {
             console.error("Error creating session", e);
@@ -228,6 +445,7 @@ let currentGenre = "";
 let currentQuery = "";
 let totalPages = 0;
 let debounceTimer;
+const PAGE_SIZE = 20;
 let selectedFilters = []; // Array of {type, id, name}
 let selectedProviders = new Set();
 let searchMode = { stream: true, rentBuy: false, movies: true, tvshows: false, boardgames: false };
@@ -475,8 +693,12 @@ window.removeFilter = function(id) {
 };
 
 function addFilter(type, id, name) {
-  if (!selectedFilters.some(f => String(f.id) === String(id))) {
-    selectedFilters.push({ type, id, name });
+  const normalizedId = String(id ?? '').replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const normalizedName = String(name ?? '').replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!normalizedId || !normalizedName) return;
+
+  if (!selectedFilters.some(f => f.type === type && String(f.id) === normalizedId)) {
+    selectedFilters.push({ type, id: normalizedId, name: normalizedName });
     renderChips();
     loadPage(1);
   }
@@ -485,14 +707,42 @@ window.addFilter = addFilter;
 
 // Add keyword filter from pill click (closes modal and updates grid)
 function addKeywordFilter(keyword) {
+  const normalizedKeyword = String(keyword || '')
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalizedKeyword) return;
+
   closeModal();
-  if (!selectedFilters.some(f => f.type === 'keyword' && f.name === keyword)) {
-    selectedFilters.push({ type: 'keyword', id: 'kw_' + keyword, name: keyword });
+  // Keyword pills should broaden search and must not stay pinned to a prior title-id filter.
+  selectedFilters = selectedFilters.filter(f => f.type !== 'movie_id');
+
+  if (!selectedFilters.some(f => f.type === 'keyword' && f.name === normalizedKeyword)) {
+    selectedFilters.push({ type: 'keyword', id: 'kw_' + normalizedKeyword, name: normalizedKeyword });
     renderChips();
     loadPage(1);
   }
 }
 window.addKeywordFilter = addKeywordFilter;
+
+function addGenreFilter(genre) {
+  const normalizedGenre = String(genre || '')
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalizedGenre) return;
+
+  closeModal();
+  // Genre pills should broaden search and must not stay pinned to a prior title-id filter.
+  selectedFilters = selectedFilters.filter(f => f.type !== 'movie_id');
+
+  if (!selectedFilters.some(f => f.type === 'genre' && f.name === normalizedGenre)) {
+    selectedFilters.push({ type: 'genre', id: normalizedGenre, name: normalizedGenre });
+    renderChips();
+    loadPage(1);
+  }
+}
+window.addGenreFilter = addGenreFilter;
 
 // ==================== END FILTER/CHIP FUNCTIONS ====================
 
@@ -1050,15 +1300,7 @@ function renderGrid(movies) {
 
   const isBoardGame = searchMode.boardgames;
 
-  // Exclude board games if BOTH image and thumbnail are missing or empty
   let filteredMovies = movies;
-  if (isBoardGame) {
-    filteredMovies = movies.filter(
-      m =>
-        (typeof m.image === 'string' && m.image.trim() !== '') ||
-        (typeof m.thumbnail === 'string' && m.thumbnail.trim() !== '')
-    );
-  }
 
   // If filteredMovies is empty, show "No results"
   if (!Array.isArray(filteredMovies) || filteredMovies.length === 0) {
@@ -1068,7 +1310,7 @@ function renderGrid(movies) {
 
   output.innerHTML = `
     <div class="grid">
-      ${filteredMovies.slice(0, 20).map((m, index) => {
+      ${filteredMovies.map((m, index) => {
         if (isBoardGame) {
           const title = m.name0 || m.name || m.title || "Unknown Game";
           const year = m.year ? Math.floor(m.year) : 0;
@@ -1144,8 +1386,103 @@ function renderGrid(movies) {
   }
 }
 
-function renderPagination(page, total) {
-  // Pagination disabled
+function renderPagination(page, totalPages = 1, totalResults = null, hasMore = false, estimatedTotalResults = null) {
+  const output = document.getElementById("output");
+  if (!output) return;
+
+  let paginationEl = document.getElementById("pagination");
+  if (!paginationEl) {
+    paginationEl = document.createElement("div");
+    paginationEl.id = "pagination";
+    paginationEl.style.display = "flex";
+    paginationEl.style.flexDirection = "column";
+    paginationEl.style.alignItems = "center";
+    paginationEl.style.justifyContent = "center";
+    paginationEl.style.gap = "10px";
+    paginationEl.style.marginTop = "18px";
+    output.insertAdjacentElement("afterend", paginationEl);
+  }
+
+  const safeTotalPages = Math.max(1, Number(totalPages) || 1);
+  const safePage = Math.min(Math.max(1, Number(page) || 1), safeTotalPages);
+  const canPrev = safePage > 1;
+  const canNext = safePage < safeTotalPages || !!hasMore;
+
+  const pageItems = [];
+  pageItems.push(1);
+
+  const start = Math.max(2, safePage - 1);
+  const end = Math.min(safeTotalPages, safePage + 1);
+
+  if (start > 2) pageItems.push('ellipsis-left');
+  for (let p = start; p <= end; p++) {
+    pageItems.push(p);
+  }
+  if (end < safeTotalPages) pageItems.push('ellipsis-right');
+  if (safeTotalPages > 1 && pageItems[pageItems.length - 1] !== safeTotalPages) {
+    pageItems.push(safeTotalPages);
+  }
+
+  const pageButtonsHtml = pageItems.map((item) => {
+    if (typeof item !== 'number') {
+      return `<span style="padding: 0 4px; color:#94a3b8;">…</span>`;
+    }
+
+    const isCurrent = item === safePage;
+    return `
+      <button
+        type="button"
+        class="button ${isCurrent ? '' : 'secondary'} pagination-page-btn"
+        data-page="${item}"
+        ${isCurrent ? 'disabled' : ''}
+        style="width:auto; margin:0; padding:8px 12px; min-width:38px; ${isCurrent ? 'cursor:default;' : ''}"
+      >${item}</button>
+    `;
+  }).join('');
+
+  paginationEl.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:center; gap:10px;">
+      <button id="pagination-prev" class="button secondary" style="width:auto; margin:0; padding:8px 14px;" ${canPrev ? "" : "disabled"}>← Prev</button>
+      <div style="display:flex; align-items:center; gap:6px;">${pageButtonsHtml}</div>
+      <button id="pagination-next" class="button secondary" style="width:auto; margin:0; padding:8px 14px;" ${canNext ? "" : "disabled"}>Next →</button>
+    </div>
+  `;
+
+  if (totalResults != null) {
+    const count = Number(totalResults) || 0;
+    const estimatedCount = Number(estimatedTotalResults);
+    const summary = document.createElement('div');
+    summary.style.fontSize = '12px';
+    summary.style.color = '#94a3b8';
+    summary.style.textAlign = 'center';
+    summary.style.marginTop = '6px';
+    summary.textContent = `${count.toLocaleString()} filtered results • Page ${safePage} of ${safeTotalPages}`;
+    if (Number.isFinite(estimatedCount) && estimatedCount > 0 && estimatedCount >= count) {
+      const subSummary = document.createElement('div');
+      subSummary.style.fontSize = '11px';
+      subSummary.style.color = '#64748b';
+      subSummary.style.textAlign = 'center';
+      subSummary.textContent = `Approx collection total: ${estimatedCount.toLocaleString()}`;
+      paginationEl.appendChild(summary);
+      paginationEl.appendChild(subSummary);
+    } else {
+      paginationEl.appendChild(summary);
+    }
+  }
+
+  const prevBtn = document.getElementById("pagination-prev");
+  const nextBtn = document.getElementById("pagination-next");
+  const pageBtns = paginationEl.querySelectorAll('.pagination-page-btn');
+  if (prevBtn) prevBtn.addEventListener("click", () => loadPage(safePage - 1));
+  if (nextBtn) nextBtn.addEventListener("click", () => loadPage(safePage + 1));
+  pageBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetPage = Number(btn.getAttribute('data-page'));
+      if (Number.isFinite(targetPage) && targetPage > 0 && targetPage !== safePage) {
+        loadPage(targetPage);
+      }
+    });
+  });
 }
 
 async function loadPage(page = 1) {
@@ -1154,8 +1491,10 @@ async function loadPage(page = 1) {
   console.log('[LoadPage] selectedFilters:', selectedFilters);
   console.log('[LoadPage] selectedProviders:', Array.from(selectedProviders));
 
-  currentPage = 1;
+  currentPage = page;
   const output = document.getElementById("output");
+  const existingPagination = document.getElementById("pagination");
+  if (existingPagination) existingPagination.remove();
   if (output) {
     output.innerHTML = `<div style="display:flex; justify-content:center; padding:50px;"><div class="spinner"></div></div>`;
   }
@@ -1166,108 +1505,163 @@ async function loadPage(page = 1) {
 
     // --- FIX: Only one of boardgames or (movies/tvshows) can be enabled ---
     if (searchMode.boardgames) {
+      const normalizeToken = (value) => String(value ?? '')
+        .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      const uniqueNormalizedNames = (filters) => {
+        const seen = new Set();
+        const out = [];
+        for (const filter of filters) {
+          const normalized = normalizeToken(filter?.name);
+          if (!normalized) continue;
+          const key = normalized.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(normalized);
+        }
+        return out;
+      };
+
+      const personFilters = selectedFilters.filter(f => f.type === 'person');
+      const genreFilters = selectedFilters.filter(f => f.type === 'genre' || f.type === 'category');
+      const keywordFilters = selectedFilters.filter(f => f.type === 'keyword' || f.type === 'tag' || f.type === 'mechanic');
+      const legacyTextFilters = selectedFilters.filter(f => f.type === 'text');
+      const nonPersonFilters = selectedFilters.filter(f => f.type !== 'person' && f.type !== 'movie_id');
+
+      if (personFilters.length > 0) {
+        console.log('[LoadPage][Boardgames] Ignoring person filters for boardgame search:', personFilters.map(f => f.name));
+      }
+
       // Check if there's a specific boardgame ID filter (from autocomplete)
       const movieIdFilter = selectedFilters.find(f => f.type === 'movie_id');
       
-      if (movieIdFilter) {
+      const hasBoardgameFilterContext = genreFilters.length > 0 || keywordFilters.length > 0 || legacyTextFilters.length > 0 || nonPersonFilters.length > 0;
+
+      if (movieIdFilter && !hasBoardgameFilterContext) {
         // Use search with specific ID
-        const params = { bgg_id: movieIdFilter.id, content_types: "boardgames" };
+        const params = { bgg_id: movieIdFilter.id, content_types: "boardgames", page: String(currentPage), page_size: String(PAGE_SIZE) };
         const dataBG = await astraApi("search", params);
         results = (dataBG && dataBG.results) ? dataBG.results : [];
+        renderGrid(results);
+        renderPagination(
+          Number(dataBG?.page || currentPage),
+          Number(dataBG?.total_pages || 1),
+          Number(dataBG?.total_results ?? results.length),
+          !!dataBG?.has_more,
+          Number(dataBG?.estimated_total_results)
+        );
+      } else if (hasBoardgameFilterContext) {
+        // Use filtered boardgame search (person pills intentionally ignored)
+        const params = { content_types: "boardgames", page: String(currentPage), page_size: String(PAGE_SIZE) };
+        const normalizedGenres = uniqueNormalizedNames(genreFilters);
+        if (normalizedGenres.length > 0) {
+          params.genre = normalizedGenres.join(',');
+        }
+        // Any non-person filter that is not a genre should be treated as keyword/tag for boardgames.
+        const keywordFallbackFilters = nonPersonFilters.filter(f => f.type !== 'genre' && f.type !== 'category');
+        const allKeywordFilters = [...keywordFilters, ...legacyTextFilters, ...keywordFallbackFilters];
+        const normalizedKeywords = uniqueNormalizedNames(allKeywordFilters);
+        if (normalizedKeywords.length > 0) {
+          params.keywords = normalizedKeywords.join(',');
+        }
+
+        const dataBG = await astraApi("search", params);
+        results = (dataBG && dataBG.results) ? dataBG.results : [];
+        renderGrid(results);
+        renderPagination(
+          Number(dataBG?.page || currentPage),
+          Number(dataBG?.total_pages || 1),
+          Number(dataBG?.total_results ?? results.length),
+          !!dataBG?.has_more,
+          Number(dataBG?.estimated_total_results)
+        );
       } else {
         // Use discover for browsing
-        const params = { sort: "usersrated", sort_order: "desc", content_types: "boardgames" };
+        const params = { sort: "usersrated", sort_order: "desc", content_types: "boardgames", page: String(currentPage), page_size: String(PAGE_SIZE) };
         const dataBG = await astraApi("discover", params);
-        results = (dataBG && dataBG.results) ? dataBG.results.filter(game => game.year) : [];
+        results = (dataBG && dataBG.results) ? dataBG.results : [];
+        renderGrid(results);
+        renderPagination(
+          Number(dataBG?.page || currentPage),
+          Number(dataBG?.total_pages || 1),
+          Number(dataBG?.total_results ?? results.length),
+          !!dataBG?.has_more,
+          Number(dataBG?.estimated_total_results)
+        );
       }
-      renderGrid(results);
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
 
     // Movies and/or TV Shows (can be both)
-    let movieResults = [];
-    let tvResults = [];
+    const activeContentTypes = [];
+    if (searchMode.movies) activeContentTypes.push('movies');
+    if (searchMode.tvshows) activeContentTypes.push('tvshows');
+    if (activeContentTypes.length === 0) activeContentTypes.push('movies');
     
     // Check if there's a specific movie/show ID filter (from autocomplete)
     const movieIdFilter = selectedFilters.find(f => f.type === 'movie_id');
+    const personFilters = selectedFilters.filter(f => f.type === 'person');
+    const genreFilters = selectedFilters.filter(f => f.type === 'genre');
+    const keywordFilters = selectedFilters.filter(f => f.type === 'keyword');
+    const hasFilters = personFilters.length > 0 || genreFilters.length > 0 || keywordFilters.length > 0;
+    const contentTypesValue = activeContentTypes.join(',');
+    let dataCombined;
     
     if (movieIdFilter) {
-      // Use search with specific ID
-      if (searchMode.movies) {
-        const params = { movie_id: movieIdFilter.id, content_types: "movies" };
-        const dataMovies = await astraApi("search", params);
-        if (dataMovies && dataMovies.results) movieResults = dataMovies.results;
-      }
-      if (searchMode.tvshows) {
-        const params = { movie_id: movieIdFilter.id, content_types: "tvshows" };
-        const dataTV = await astraApi("search", params);
-        if (dataTV && dataTV.results) tvResults = dataTV.results;
-      }
+      dataCombined = await astraApi("search", {
+        movie_id: movieIdFilter.id,
+        content_types: contentTypesValue,
+        page: String(currentPage),
+        page_size: String(PAGE_SIZE)
+      });
+      results = dataCombined?.results || [];
     } else {
-      // Check for other filters (person, genre, etc) that should use search
-      const personFilters = selectedFilters.filter(f => f.type === 'person');
-      const genreFilters = selectedFilters.filter(f => f.type === 'genre');
-      const keywordFilters = selectedFilters.filter(f => f.type === 'keyword');
-      const hasFilters = personFilters.length > 0 || genreFilters.length > 0 || keywordFilters.length > 0;
-      
       if (hasFilters) {
-        // Use search with filter parameters
-        if (searchMode.movies) {
-          const params = { content_types: "movies" };
-          if (personFilters.length > 0) {
-            params.person = personFilters.map(f => f.id).join(',');
-          }
-          if (genreFilters.length > 0) {
-            params.genre = genreFilters.map(f => f.id).join(',');
-          }
-          if (keywordFilters.length > 0) {
-            params.keywords = keywordFilters.map(f => f.name).join(',');
-          }
-          const dataMovies = await astraApi("search", params);
-          if (dataMovies && dataMovies.results) movieResults = dataMovies.results;
+        const params = {
+          content_types: contentTypesValue,
+          page: String(currentPage),
+          page_size: String(PAGE_SIZE)
+        };
+        if (personFilters.length > 0) {
+          params.person = personFilters.map(f => f.id).join(',');
         }
-        if (searchMode.tvshows) {
-          const params = { content_types: "tvshows" };
-          if (personFilters.length > 0) {
-            params.person = personFilters.map(f => f.id).join(',');
-          }
-          if (genreFilters.length > 0) {
-            params.genre = genreFilters.map(f => f.id).join(',');
-          }
-          if (keywordFilters.length > 0) {
-            params.keywords = keywordFilters.map(f => f.name).join(',');
-          }
-          const dataTV = await astraApi("search", params);
-          if (dataTV && dataTV.results) tvResults = dataTV.results;
+        if (genreFilters.length > 0) {
+          params.genre = genreFilters.map(f => f.id).join(',');
         }
+        if (keywordFilters.length > 0) {
+          params.keywords = keywordFilters.map(f => f.name).join(',');
+        }
+        dataCombined = await astraApi("search", params);
+        results = dataCombined?.results || [];
       } else {
-        // Use discover for browsing (no filters)
-        if (searchMode.movies) {
-          const params = { sort: "popularity", sort_order: "desc", content_types: "movies" };
-          const dataMovies = await astraApi("discover", params);
-          if (dataMovies && dataMovies.results) movieResults = dataMovies.results;
-        }
-        if (searchMode.tvshows) {
-          const params = { sort: "popularity", sort_order: "desc", content_types: "tvshows" };
-          const dataTV = await astraApi("discover", params);
-          if (dataTV && dataTV.results) tvResults = dataTV.results;
-        }
+        dataCombined = await astraApi("discover", {
+          sort: "popularity",
+          sort_order: "desc",
+          content_types: contentTypesValue,
+          page: String(currentPage),
+          page_size: String(PAGE_SIZE)
+        });
+        results = dataCombined?.results || [];
       }
     }
-    
-    results = [...movieResults, ...tvResults];
-    // Sort by popularity (descending), fallback to 0 if missing
-    results.sort((a, b) => {
-      const aPop = a.popularity ? Number(a.popularity) : 0;
-      const bPop = b.popularity ? Number(b.popularity) : 0;
-      return bPop - aPop;
-    });
+
     renderGrid(results);
+    renderPagination(
+      Number(dataCombined?.page || currentPage),
+      Number(dataCombined?.total_pages || 1),
+      Number(dataCombined?.total_results ?? results.length),
+      !!dataCombined?.has_more,
+      Number(dataCombined?.estimated_total_results)
+    );
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (error) {
     console.error("Error loading page:", error);
     const output = document.getElementById("output");
+    const pagination = document.getElementById("pagination");
+    if (pagination) pagination.remove();
     if (output) {
       output.textContent = "Error loading content. Please try again.";
     }
@@ -1420,7 +1814,7 @@ async function openMovieModal(movieId, contentType = 'movie') {
       const publishersHtml = publishers.length > 0 ? `
         <div class="sectionTitle" style="margin-top: 8px;">Publishers</div>
         <div class="pillRow" style="margin-top: 4px;">
-          ${publishers.map(p => `<span class="pill publisher-pill" onclick="addKeywordFilter('${escapeHtml(p).replace(/'/g, "\\'")}'" style="cursor: pointer; background: #e3f2fd; color: #1976d2; border: 1px solid #bbdefb;">${escapeHtml(p)}</span>`).join("")}
+          ${publishers.map(p => `<span class="pill publisher-pill" style="cursor: pointer; background: #e3f2fd; color: #1976d2; border: 1px solid #bbdefb;">${escapeHtml(p)}</span>`).join("")}
         </div>
       ` : '';
 
@@ -1441,7 +1835,7 @@ async function openMovieModal(movieId, contentType = 'movie') {
       const categoriesHtml = categories.length > 0 ? `
         <div class="sectionTitle" style="margin-top: 8px;">Categories</div>
         <div class="pillRow" style="margin-top: 4px;">
-          ${categories.map(c => `<span class="pill category-pill" onclick="addKeywordFilter('${escapeHtml(c).replace(/'/g, "\\'")}'" style="cursor: pointer; background: #f3e5f5; color: #7b1fa2; border: 1px solid #e1bee7;">${escapeHtml(c)}</span>`).join("")}
+          ${categories.map(c => `<span class="pill category-pill" style="cursor: pointer; background: #f3e5f5; color: #7b1fa2; border: 1px solid #e1bee7;">${escapeHtml(c)}</span>`).join("")}
         </div>
       ` : '';
 
@@ -1462,7 +1856,7 @@ async function openMovieModal(movieId, contentType = 'movie') {
       const mechanicsHtml = mechanics.length > 0 ? `
         <div class="sectionTitle" style="margin-top: 8px;">Mechanics</div>
         <div class="pillRow" style="margin-top: 4px;">
-          ${mechanics.map(m => `<span class="pill mechanic-pill" onclick="addKeywordFilter('${escapeHtml(m).replace(/'/g, "\\'")}'" style="cursor: pointer; background: #e8f5e9; color: #388e3c; border: 1px solid #c8e6c9;">${escapeHtml(m)}</span>`).join("")}
+          ${mechanics.map(m => `<span class="pill mechanic-pill" style="cursor: pointer; background: #e8f5e9; color: #388e3c; border: 1px solid #c8e6c9;">${escapeHtml(m)}</span>`).join("")}
         </div>
       ` : '';
 
@@ -1480,7 +1874,7 @@ async function openMovieModal(movieId, contentType = 'movie') {
       const designersHtml = designers.length > 0 ? `
         <div class="sectionTitle" style="margin-top: 8px;">Designers</div>
         <div class="pillRow" style="margin-top: 4px;">
-          ${designers.map(d => `<span class="pill designer-pill" onclick="addKeywordFilter('${escapeHtml(d).replace(/'/g, "\\'")}'" style="cursor: pointer; background: #fff3e0; color: #e65100; border: 1px solid #ffe0b2;">${escapeHtml(d)}</span>`).join("")}
+          ${designers.map(d => `<span class="pill designer-pill" style="cursor: pointer; background: #fff3e0; color: #e65100; border: 1px solid #ffe0b2;">${escapeHtml(d)}</span>`).join("")}
         </div>
       ` : '';
 
@@ -1497,7 +1891,7 @@ async function openMovieModal(movieId, contentType = 'movie') {
       const artistsHtml = artists.length > 0 ? `
         <div class="sectionTitle" style="margin-top: 8px;">Artists</div>
         <div class="pillRow" style="margin-top: 4px;">
-          ${artists.map(a => `<span class="pill artist-pill" onclick="addKeywordFilter('${escapeHtml(a).replace(/'/g, "\\'")}'" style="cursor: pointer; background: #fce4ec; color: #c2185b; border: 1px solid #f8bbd9;">${escapeHtml(a)}</span>`).join("")}
+          ${artists.map(a => `<span class="pill artist-pill" style="cursor: pointer; background: #fce4ec; color: #c2185b; border: 1px solid #f8bbd9;">${escapeHtml(a)}</span>`).join("")}
         </div>
       ` : '';
 
@@ -1629,51 +2023,36 @@ async function openMovieModal(movieId, contentType = 'movie') {
 
       modalBody.querySelectorAll(".publisher-pill").forEach(pill => {
         pill.addEventListener("click", () => {
-          const publisher = pill.textContent;
-          addFilter("text", publisher, publisher);
-          renderChips();
-          loadPage(1);
-          closeModal();
+          const publisher = (pill.textContent || '').trim();
+          addKeywordFilter(publisher);
         });
       });
 
       modalBody.querySelectorAll(".category-pill").forEach(pill => {
         pill.addEventListener("click", () => {
-          const category = pill.textContent;
-          addFilter("text", category, category);
-          renderChips();
-          loadPage(1);
-          closeModal();
+          const category = (pill.textContent || '').trim();
+          addGenreFilter(category);
         });
       });
 
       modalBody.querySelectorAll(".mechanic-pill").forEach(pill => {
         pill.addEventListener("click", () => {
-          const mechanic = pill.textContent;
-          addFilter("text", mechanic, mechanic);
-          renderChips();
-          loadPage(1);
-          closeModal();
+          const mechanic = (pill.textContent || '').trim();
+          addKeywordFilter(mechanic);
         });
       });
 
       modalBody.querySelectorAll(".designer-pill").forEach(pill => {
         pill.addEventListener("click", () => {
-          const designer = pill.textContent;
-          addFilter("person", designer, designer);
-          renderChips();
-          loadPage(1);
-          closeModal();
+          const designer = (pill.textContent || '').trim();
+          addKeywordFilter(designer);
         });
       });
 
       modalBody.querySelectorAll(".artist-pill").forEach(pill => {
         pill.addEventListener("click", () => {
-          const artist = pill.textContent;
-          addFilter("person", artist, artist);
-          renderChips();
-          loadPage(1);
-          closeModal();
+          const artist = (pill.textContent || '').trim();
+          addKeywordFilter(artist);
         });
       });
 
