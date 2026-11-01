@@ -680,66 +680,47 @@ function getProviderUrl(name) {
 
 
 
-// Dynamically loaded autocomplete data
-let genreList = [];
-let genreSet = new Set();
-let movieAutocompleteData = [];
-let boardgameAutocompleteData = [];
-
-// Load movie/TV autocomplete.json and extract genres
-fetch("/autocomplete.json")
-  .then(r => {
-      if (!r.ok) throw new Error("Failed to load autocomplete data");
-      return r.json();
-  })
-  .then(data => {
-    movieAutocompleteData = data;
-    // Support both compact ([type, name, searchName]) and object ({type, name, ...}) formats
-    const genres = (Array.isArray(data) ? data : data.entries || data)
-      .filter(entry => (Array.isArray(entry) ? entry[0] === 2 : entry.type === "genre" || entry.type === 2))
-      .map(entry => Array.isArray(entry) ? entry[1] : entry.name)
-      .filter(name => !!name);
-    genreSet = new Set(genres);
-    genreList = Array.from(genreSet).sort((a, b) => a.localeCompare(b));
-    enableSearchIfReady();
-  });
-
-// Load board game autocomplete data
-fetch("/autocomplete-boardgames.json")
-  .then(r => {
-      if (!r.ok) throw new Error("Failed to load board game autocomplete data");
-      return r.json();
-  })
-  .then(data => {
-    boardgameAutocompleteData = data;
-    console.log('[Autocomplete] Loaded', boardgameAutocompleteData.length, 'board games');
-    enableSearchIfReady();
-  })
-  .catch(err => {
-    console.warn('[Autocomplete] Could not load board game data:', err);
-    enableSearchIfReady();
-  });
-
-// Enable search input once autocomplete data is ready
-function enableSearchIfReady() {
+// Server-backed autocomplete (Astra collection)
+function enableSearchInput() {
   const searchInput = document.getElementById('searchInput');
   if (!searchInput) return;
-  
-  // Enable if we have movie data (covers movies and TV shows)
-  // For boardgames-only mode, we still wait for boardgame data
-  if (movieAutocompleteData.length > 0) {
-    searchInput.disabled = false;
-    syncSearchInputPlaceholder();
-    searchInput.title = '';
-    console.log('[Autocomplete] Search input enabled');
-  }
+
+  searchInput.disabled = false;
+  searchInput.title = '';
+  syncSearchInputPlaceholder();
 }
+
+enableSearchInput();
 
 // ==================== AUTOCOMPLETE FUNCTIONS ====================
 
 let selectedSuggestionIndex = -1;
+let autocompleteRequestSeq = 0;
+let autocompleteDebounceTimer = null;
+const autocompleteCache = new Map();
 
-function showAutocomplete(query) {
+async function fetchAutocompleteSuggestions(query) {
+  const normalized = String(query || '').trim().toLowerCase();
+  if (!normalized || normalized.length < 2) return [];
+
+  const scope = searchMode.boardgames ? 'boardgames' : 'media';
+  const cacheKey = `${scope}:${normalized}`;
+  if (autocompleteCache.has(cacheKey)) return autocompleteCache.get(cacheKey);
+
+  const data = await astraApi('autocomplete', { query: normalized, scope, limit: 10 });
+  const rows = Array.isArray(data?.results) ? data.results : [];
+  autocompleteCache.set(cacheKey, rows);
+
+  // Keep cache bounded.
+  if (autocompleteCache.size > 200) {
+    const firstKey = autocompleteCache.keys().next().value;
+    if (firstKey) autocompleteCache.delete(firstKey);
+  }
+
+  return rows;
+}
+
+async function showAutocomplete(query) {
   const suggestionsDiv = document.getElementById('suggestions');
   if (!suggestionsDiv) return;
 
@@ -748,17 +729,9 @@ function showAutocomplete(query) {
     return;
   }
 
-  const lowerQuery = query.toLowerCase();
-  const data = searchMode.boardgames ? boardgameAutocompleteData : movieAutocompleteData;
-  console.log('[showAutocomplete] searchMode.boardgames:', searchMode.boardgames, '| Using dataset:', searchMode.boardgames ? 'boardgames' : 'movies', '| Data length:', data.length);
-
-  // Filter and match
-  const matches = data
-    .filter(item => {
-      const name = item.name || item.title || '';
-      return name.toLowerCase().includes(lowerQuery);
-    })
-    .slice(0, 10); // Limit to 10 results
+  const reqId = ++autocompleteRequestSeq;
+  const matches = await fetchAutocompleteSuggestions(query);
+  if (reqId !== autocompleteRequestSeq) return;
 
   if (matches.length === 0) {
     suggestionsDiv.style.display = 'none';
@@ -767,7 +740,7 @@ function showAutocomplete(query) {
 
   suggestionsDiv.innerHTML = matches.map((item, index) => {
     const name = item.name || item.title || '';
-    const type = searchMode.boardgames ? 'boardgame' : (item.type || 'movie');
+    const type = item.type || (searchMode.boardgames ? 'boardgame' : 'movie');
     const typeLabel = type === 'boardgame' ? '🎲 Game' :
                      type === 'person' ? '👤 Person' :
                      type === 'genre' ? '🎭 Genre' :
@@ -834,7 +807,11 @@ if (searchInput) {
   searchInput.addEventListener('input', (e) => {
     selectedSuggestionIndex = -1;
     syncSearchInputPlaceholder();
-    showAutocomplete(e.target.value);
+
+    if (autocompleteDebounceTimer) clearTimeout(autocompleteDebounceTimer);
+    autocompleteDebounceTimer = setTimeout(() => {
+      showAutocomplete(e.target.value);
+    }, 120);
   });
 
   searchInput.addEventListener('keydown', (e) => {

@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "netlify:dev": "netlify dev",
-    "test:tmdb-auth": "node bin/test_tmdb_auth.js"
+    "test:tmdb-auth": "node bin/test_tmdb_auth.js",
+    "autocomplete:build-buckets": "python3 bin/build_autocomplete_buckets.py",
+    "autocomplete:build-buckets:legacy": "node bin/build_autocomplete_buckets.js"
   },
   "devDependencies": {
     "adm-zip": "^0.5.16",

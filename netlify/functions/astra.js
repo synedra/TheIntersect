@@ -1,7 +1,5 @@
 import { DataAPIClient } from "@datastax/astra-db-ts";
 import fetch from "node-fetch";
-import fs from "fs";
-import path from "path";
 import dotenv from "dotenv";
 
 dotenv.config({ override: true });
@@ -12,44 +10,17 @@ const EMBEDDING_MODEL = "text-embedding-3-small";
 const client = new DataAPIClient(process.env.ASTRA_DB_APPLICATION_TOKEN);
 const db = client.db(process.env.ASTRA_DB_API_ENDPOINT);
 
-// In-memory cache for autocomplete data
-let cachedAutocompleteData = null;
 // In-memory cache for discover results
 let discoverCache = {};
 // In-memory cache for genre searches
 let genreCache = {};
 
-function getAutocompleteData() {
-  if (cachedAutocompleteData) return cachedAutocompleteData;
-  
-  const cwd = process.cwd();
-  const possiblePaths = [
-    path.join(cwd, 'public', 'autocomplete.json'),
-    path.join(cwd, 'autocomplete.json'),
-    './public/autocomplete.json'
-  ];
-  
-  let fileBuffer = null;
-  for (const filePath of possiblePaths) {
-    try {
-      if (fs.existsSync(filePath)) {
-        fileBuffer = fs.readFileSync(filePath);
-        break;
-      }
-    } catch (e) {}
-  }
-  
-  if (!fileBuffer) {
-    cachedAutocompleteData = [];
-    return [];
-  }
-  
-  try {
-      cachedAutocompleteData = JSON.parse(fileBuffer.toString('utf8'));
-  } catch (e) {
-      cachedAutocompleteData = [];
-  }
-  return cachedAutocompleteData;
+function normalizeAutocompleteQuery(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function generateEmbedding(text) {
@@ -175,6 +146,8 @@ export async function handler(event) {
   if (collections.length === 0) collections.push({ name: 'movies2026', type: 'movie' });
   
   const moviesCollection = db.collection('movies2026');
+  const autocompleteEntriesCollection = db.collection('autocomplete_entries');
+  const autocompleteBucketsCollection = db.collection('autocomplete_buckets');
 
   try {
     switch (action) {
@@ -1049,45 +1022,84 @@ export async function handler(event) {
       }
 
       case "autocomplete": {
-          const query = qs.query ? qs.query.toLowerCase() : "";
-          if(query.length < 2) return { statusCode: 200, body: JSON.stringify({ results: [] }) };
-          
-          const data = getAutocompleteData();
-          let matches = data.filter(d => d.name && d.name.toLowerCase().includes(query));
+          const query = normalizeAutocompleteQuery(qs.query || "");
+          const limit = Math.max(1, Math.min(25, parseInt(qs.limit, 10) || 10));
+          if (query.length < 2) return { statusCode: 200, body: JSON.stringify({ results: [] }) };
 
-          // Sort smart: startsWith > short names > others
-          matches.sort((a, b) => {
-             const aName = a.name.toLowerCase();
-             const bName = b.name.toLowerCase();
-             const aStarts = aName.startsWith(query);
-             const bStarts = bName.startsWith(query);
+          const scope = ['media', 'boardgames', 'all'].includes(qs.scope) ? qs.scope : 'media';
 
-             if (aStarts && !bStarts) return -1;
-             if (!aStarts && bStarts) return 1;
-             return aName.length - bName.length;
-          });
+          // Preferred path: dedicated autocomplete entries collection.
+          try {
+            const scopeFilter = scope === 'all'
+              ? { $in: ['all', 'media', 'boardgames'] }
+              : { $in: [scope, 'all'] };
 
-          matches = matches.slice(0, 50);
-          
-          const results = [];
-          const seen = new Set();
-          for(const m of matches) {
-              const key = `${m.type}:${m.name}`;
-              if(seen.has(key)) continue;
-              seen.add(key);
-              
-              let result = {};
-              if (m.type === 'movie') {
-                result = { type: 'movie', id: m.movieId, title: m.name };
-              } else if (m.type === 'person') {
-                result = { type: 'person', id: m.movieId, name: m.name };
-              } else if (m.type === 'genre') {
-                result = { type: 'genre', id: m.movieId, name: m.name };
+            const entryRows = await autocompleteEntriesCollection.find(
+              {
+                scope: scopeFilter,
+                searchName: { $regex: `^${query}` }
+              },
+              {
+                sort: { score: -1 },
+                limit: Math.max(limit * 3, 30),
+                projection: { $vector: 0 }
               }
-              if (m.icon) result.icon = m.icon;
-              results.push(result);
+            ).toArray();
+
+            if (entryRows.length > 0) {
+              const dedup = new Set();
+              const results = [];
+              for (const row of entryRows) {
+                const key = `${row.type}:${String(row.id || '')}:${String(row.name || '').toLowerCase()}`;
+                if (dedup.has(key)) continue;
+                dedup.add(key);
+                results.push({
+                  type: row.type,
+                  id: row.id,
+                  name: row.name,
+                  title: row.name,
+                  score: row.score,
+                  popularity: row.popularity,
+                  boardgamerank: row.boardgamerank
+                });
+                if (results.length >= limit) break;
+              }
+
+              if (results.length > 0) {
+                return { statusCode: 200, body: JSON.stringify({ results, source: 'astra-entries' }) };
+              }
+            }
+          } catch (e) {
+            console.warn('[autocomplete] entries lookup failed; trying next fallback:', e?.message || e);
           }
-          return { statusCode: 200, body: JSON.stringify({ results }) };
+
+          // Preferred path: prefix bucket lookup in Astra collection.
+          let bucket = null;
+          try {
+            bucket = await autocompleteBucketsCollection.findOne({ _id: `${scope}:${query}` });
+            if (!bucket && scope !== 'all') {
+              bucket = await autocompleteBucketsCollection.findOne({ _id: `all:${query}` });
+            }
+          } catch (e) {
+            console.warn('[autocomplete] bucket lookup failed:', e?.message || e);
+          }
+
+          if (bucket && Array.isArray(bucket.items)) {
+            const results = bucket.items
+              .slice(0, limit)
+              .map((item) => ({
+                type: item.type,
+                id: item.id,
+                name: item.name,
+                title: item.name,
+                score: item.score,
+                popularity: item.popularity,
+                boardgamerank: item.boardgamerank
+              }));
+            return { statusCode: 200, body: JSON.stringify({ results, source: 'astra-buckets' }) };
+          }
+
+          return { statusCode: 200, body: JSON.stringify({ results: [], source: 'astra-empty' }) };
       }
 
       case "similar": {
