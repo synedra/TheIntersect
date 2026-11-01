@@ -449,7 +449,7 @@ export async function handler(event) {
              
              // Sort appropriately
              if (isBoardGameSearch) {
-                 searchResults.sort((a, b) => (b.average || 0) - (a.average || 0));
+                 searchResults.sort((a, b) => (b.boardgamerank || 0) - (a.boardgamerank || 0));
              } else {
                  searchResults.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
              }
