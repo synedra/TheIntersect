@@ -260,7 +260,7 @@ export async function handler(event) {
         
         const filterConditions = [];
 
-        // Board game specific filtering
+        // Board game specific filtering 
         if (isBoardGameSearch) {
             // For board games, genres map to categories
             genreList.forEach(cat => {
@@ -589,6 +589,7 @@ export async function handler(event) {
               const boardgameFilter = {
                 average: { $gt: 7 },
                 boardgamerank: { $lte: 1000 },
+                usersrated: { $gte: 5000 },
                 year: { $gte: minYear }  // Last 10 years
               };
               console.log(`[Discover] ${collInfo.name} - Query:`, boardgameFilter, `limit: ${limit * 4} (no sort - will sort in memory)`);
