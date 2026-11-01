@@ -654,8 +654,8 @@ export async function handler(event) {
         
         // Sort all results by their respective rating metric (descending)
         allResults.sort((a, b) => {
-          const aScore = a.popularity || a.average || 0;
-          const bScore = b.popularity || b.average || 0;
+          const aScore = a.popularity || a.boardgamerank || 0;
+          const bScore = b.popularity || b.boardgamerank || 0
           return bScore - aScore;
         });
         
@@ -952,7 +952,7 @@ export async function handler(event) {
             ).toArray();
             
             // Sort in memory by average rating
-            similarGames.sort((a, b) => (b.average || 0) - (a.average || 0));
+            similarGames.sort((a, b) => (b.boardgamerank || 0) - (a.boardgamerank || 0));
             
             // Exclude source game by bggid
             const sourceBggid = fullGame.bggid;
