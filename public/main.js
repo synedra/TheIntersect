@@ -697,9 +697,10 @@ enableSearchInput();
 let selectedSuggestionIndex = -1;
 let autocompleteRequestSeq = 0;
 let autocompleteDebounceTimer = null;
+let autocompleteAbortController = null;
 const autocompleteCache = new Map();
 
-async function fetchAutocompleteSuggestions(query) {
+async function fetchAutocompleteSuggestions(query, signal) {
   const normalized = String(query || '').trim().toLowerCase();
   if (!normalized || normalized.length < 2) return [];
 
@@ -707,17 +708,48 @@ async function fetchAutocompleteSuggestions(query) {
   const cacheKey = `${scope}:${normalized}`;
   if (autocompleteCache.has(cacheKey)) return autocompleteCache.get(cacheKey);
 
-  const data = await astraApi('autocomplete', { query: normalized, scope, limit: 10 });
-  const rows = Array.isArray(data?.results) ? data.results : [];
-  autocompleteCache.set(cacheKey, rows);
-
-  // Keep cache bounded.
-  if (autocompleteCache.size > 200) {
-    const firstKey = autocompleteCache.keys().next().value;
-    if (firstKey) autocompleteCache.delete(firstKey);
+  // Fast path: refine from the longest cached prefix for this scope.
+  let bestPrefixRows = null;
+  let bestPrefixLength = 0;
+  for (const [key, rows] of autocompleteCache.entries()) {
+    const [keyScope, keyQuery] = String(key).split(':');
+    if (keyScope !== scope || !keyQuery) continue;
+    if (!normalized.startsWith(keyQuery)) continue;
+    if (!Array.isArray(rows) || rows.length === 0) continue;
+    if (keyQuery.length > bestPrefixLength) {
+      bestPrefixLength = keyQuery.length;
+      bestPrefixRows = rows;
+    }
   }
 
-  return rows;
+  if (bestPrefixRows) {
+    const quickRows = bestPrefixRows
+      .filter((item) => String(item?.name || item?.title || '').toLowerCase().includes(normalized))
+      .slice(0, 10);
+
+    if (quickRows.length > 0) {
+      autocompleteCache.set(cacheKey, quickRows);
+      return quickRows;
+    }
+  }
+
+  try {
+    const data = await astraApi('autocomplete', { query: normalized, scope, limit: 10 }, { signal });
+    const rows = Array.isArray(data?.results) ? data.results : [];
+    autocompleteCache.set(cacheKey, rows);
+
+    // Keep cache bounded.
+    if (autocompleteCache.size > 200) {
+      const firstKey = autocompleteCache.keys().next().value;
+      if (firstKey) autocompleteCache.delete(firstKey);
+    }
+
+    return rows;
+  } catch (error) {
+    if (error?.name === 'AbortError') return [];
+    console.error('[autocomplete] fetch failed:', error);
+    return [];
+  }
 }
 
 async function showAutocomplete(query) {
@@ -730,7 +762,12 @@ async function showAutocomplete(query) {
   }
 
   const reqId = ++autocompleteRequestSeq;
-  const matches = await fetchAutocompleteSuggestions(query);
+  if (autocompleteAbortController) {
+    try { autocompleteAbortController.abort(); } catch (_) {}
+  }
+  autocompleteAbortController = new AbortController();
+
+  const matches = await fetchAutocompleteSuggestions(query, autocompleteAbortController.signal);
   if (reqId !== autocompleteRequestSeq) return;
 
   if (matches.length === 0) {
@@ -810,7 +847,7 @@ if (searchInput) {
 
     if (autocompleteDebounceTimer) clearTimeout(autocompleteDebounceTimer);
     autocompleteDebounceTimer = setTimeout(() => {
-      showAutocomplete(e.target.value);
+      showAutocomplete(searchInput.value);
     }, 120);
   });
 
@@ -1444,10 +1481,11 @@ if (btnBggLogout) {
   });
 }
 
-async function astraApi(action, params = {}) {
+async function astraApi(action, params = {}, requestOptions = {}) {
   try {
     const url = new URL("/.netlify/functions/astra", window.location.origin);
     url.searchParams.set("action", action);
+    const isAutocomplete = action === 'autocomplete';
     
     // Add settings to API calls
     if (settings.showSimilar !== undefined) {
@@ -1463,10 +1501,16 @@ async function astraApi(action, params = {}) {
       url.searchParams.set(key, value);
     });
 
-    console.log(`[astraApi] Sending request: action=${action}, full URL=${url.toString()}, params=`, params);
+    if (!isAutocomplete) {
+      console.log(`[astraApi] Sending request: action=${action}, full URL=${url.toString()}, params=`, params);
+    }
 
-    const response = await fetch(url.toString());
-    console.log(`[astraApi] Response status: ${response.status}, headers:`, Object.fromEntries(response.headers.entries()));
+    const response = await fetch(url.toString(), {
+      signal: requestOptions?.signal
+    });
+    if (!isAutocomplete) {
+      console.log(`[astraApi] Response status: ${response.status}, headers:`, Object.fromEntries(response.headers.entries()));
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -1475,7 +1519,9 @@ async function astraApi(action, params = {}) {
     }
 
     const data = await response.json();
-    console.log(`[astraApi] Received data:`, data);
+    if (!isAutocomplete) {
+      console.log(`[astraApi] Received data:`, data);
+    }
     return data;
   } catch (error) {
     console.error("[astraApi] Error:", error);

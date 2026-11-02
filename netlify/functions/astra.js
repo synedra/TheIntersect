@@ -14,6 +14,36 @@ const db = client.db(process.env.ASTRA_DB_API_ENDPOINT);
 let discoverCache = {};
 // In-memory cache for genre searches
 let genreCache = {};
+// In-memory cache for autocomplete responses
+const AUTOCOMPLETE_CACHE_TTL_MS = 20_000;
+const autocompleteResponseCache = new Map();
+let autocompleteEntriesUnavailable = false;
+
+function getAutocompleteCacheKey({ scope, query, limit }) {
+  return `${scope}:${query}:${limit}`;
+}
+
+function getCachedAutocomplete(cacheKey) {
+  const cached = autocompleteResponseCache.get(cacheKey);
+  if (!cached) return null;
+  if ((Date.now() - cached.ts) > AUTOCOMPLETE_CACHE_TTL_MS) {
+    autocompleteResponseCache.delete(cacheKey);
+    return null;
+  }
+  return cached.payload;
+}
+
+function setCachedAutocomplete(cacheKey, payload) {
+  autocompleteResponseCache.set(cacheKey, {
+    ts: Date.now(),
+    payload
+  });
+
+  if (autocompleteResponseCache.size > 500) {
+    const oldestKey = autocompleteResponseCache.keys().next().value;
+    if (oldestKey) autocompleteResponseCache.delete(oldestKey);
+  }
+}
 
 function normalizeAutocompleteQuery(value) {
   return String(value || "")
@@ -148,6 +178,7 @@ export async function handler(event) {
   const moviesCollection = db.collection('movies2026');
   const autocompleteEntriesCollection = db.collection('autocomplete_entries');
   const autocompleteBucketsCollection = db.collection('autocomplete_buckets');
+  const maintenanceMetadataCollection = db.collection('maintenance_metadata');
 
   try {
     switch (action) {
@@ -1027,8 +1058,20 @@ export async function handler(event) {
           if (query.length < 2) return { statusCode: 200, body: JSON.stringify({ results: [] }) };
 
           const scope = ['media', 'boardgames', 'all'].includes(qs.scope) ? qs.scope : 'media';
+          const cacheKey = getAutocompleteCacheKey({ scope, query, limit });
+
+          const cachedPayload = getCachedAutocomplete(cacheKey);
+          if (cachedPayload) {
+            return { statusCode: 200, body: JSON.stringify(cachedPayload) };
+          }
+
+          const returnAutocomplete = (payload) => {
+            setCachedAutocomplete(cacheKey, payload);
+            return { statusCode: 200, body: JSON.stringify(payload) };
+          };
 
           // Preferred path: dedicated autocomplete entries collection.
+          if (!autocompleteEntriesUnavailable) {
           try {
             const scopeFilter = scope === 'all'
               ? { $in: ['all', 'media', 'boardgames'] }
@@ -1036,20 +1079,40 @@ export async function handler(event) {
 
             const entryRows = await autocompleteEntriesCollection.find(
               {
-                scope: scopeFilter,
-                searchName: { $regex: `^${query}` }
+                scope: scopeFilter
               },
               {
-                sort: { score: -1 },
-                limit: Math.max(limit * 3, 30),
+                limit: Math.max(limit * 80, 800),
                 projection: { $vector: 0 }
               }
             ).toArray();
 
             if (entryRows.length > 0) {
+              const starts = [];
+              const contains = [];
+
+              for (const row of entryRows) {
+                const searchName = String(row.searchName || row.name || row.title || '').toLowerCase();
+                if (!searchName) continue;
+                if (searchName.startsWith(query)) starts.push(row);
+                else if (searchName.includes(query)) contains.push(row);
+              }
+
+              const rankedRows = [...starts, ...contains].sort((a, b) => {
+                const scoreDelta = Number(b.score || 0) - Number(a.score || 0);
+                if (scoreDelta !== 0) return scoreDelta;
+
+                const popDelta = Number(b.popularity || 0) - Number(a.popularity || 0);
+                if (popDelta !== 0) return popDelta;
+
+                const rankA = Number(a.boardgamerank || Number.MAX_SAFE_INTEGER);
+                const rankB = Number(b.boardgamerank || Number.MAX_SAFE_INTEGER);
+                return rankA - rankB;
+              });
+
               const dedup = new Set();
               const results = [];
-              for (const row of entryRows) {
+              for (const row of rankedRows) {
                 const key = `${row.type}:${String(row.id || '')}:${String(row.name || '').toLowerCase()}`;
                 if (dedup.has(key)) continue;
                 dedup.add(key);
@@ -1066,26 +1129,51 @@ export async function handler(event) {
               }
 
               if (results.length > 0) {
-                return { statusCode: 200, body: JSON.stringify({ results, source: 'astra-entries' }) };
+                return returnAutocomplete({ results, source: 'astra-entries' });
               }
             }
           } catch (e) {
+            autocompleteEntriesUnavailable = true;
             console.warn('[autocomplete] entries lookup failed; trying next fallback:', e?.message || e);
+          }
           }
 
           // Preferred path: prefix bucket lookup in Astra collection.
           let bucket = null;
           try {
-            bucket = await autocompleteBucketsCollection.findOne({ _id: `${scope}:${query}` });
-            if (!bucket && scope !== 'all') {
-              bucket = await autocompleteBucketsCollection.findOne({ _id: `all:${query}` });
+            const maxBucketPrefixLen = Math.min(8, query.length);
+            for (let len = maxBucketPrefixLen; len >= 2 && !bucket; len -= 1) {
+              const p = query.slice(0, len);
+              // eslint-disable-next-line no-await-in-loop
+              bucket = await autocompleteBucketsCollection.findOne({ _id: `${scope}:${p}` });
+              if (!bucket && scope !== 'all') {
+                // eslint-disable-next-line no-await-in-loop
+                bucket = await autocompleteBucketsCollection.findOne({ _id: `all:${p}` });
+              }
             }
           } catch (e) {
             console.warn('[autocomplete] bucket lookup failed:', e?.message || e);
           }
 
           if (bucket && Array.isArray(bucket.items)) {
-            const results = bucket.items
+            const filteredItems = bucket.items.filter((item) => {
+              const n = String(item?.name || '').toLowerCase();
+              return n.includes(query);
+            });
+
+            const results = filteredItems
+              .slice()
+              .sort((a, b) => {
+                const an = String(a?.name || '').toLowerCase();
+                const bn = String(b?.name || '').toLowerCase();
+                const aStarts = an.startsWith(query);
+                const bStarts = bn.startsWith(query);
+                if (aStarts !== bStarts) return aStarts ? -1 : 1;
+                const aContains = an.includes(query);
+                const bContains = bn.includes(query);
+                if (aContains !== bContains) return aContains ? -1 : 1;
+                return Number(b?.score || 0) - Number(a?.score || 0);
+              })
               .slice(0, limit)
               .map((item) => ({
                 type: item.type,
@@ -1096,10 +1184,173 @@ export async function handler(event) {
                 popularity: item.popularity,
                 boardgamerank: item.boardgamerank
               }));
-            return { statusCode: 200, body: JSON.stringify({ results, source: 'astra-buckets' }) };
+
+            if (results.length > 0) {
+              return returnAutocomplete({ results, source: 'astra-buckets' });
+            }
           }
 
-          return { statusCode: 200, body: JSON.stringify({ results: [], source: 'astra-empty' }) };
+          // Alternate prefix-bucket path stored in maintenance metadata.
+          try {
+            let mdBucket = null;
+            const maxBucketPrefixLen = Math.min(8, query.length);
+            for (let len = maxBucketPrefixLen; len >= 2 && !mdBucket; len -= 1) {
+              const p = query.slice(0, len);
+              // eslint-disable-next-line no-await-in-loop
+              mdBucket = await maintenanceMetadataCollection.findOne({ _id: `autocomplete_bucket:${scope}:${p}` });
+              if (!mdBucket && scope !== 'all') {
+                // eslint-disable-next-line no-await-in-loop
+                mdBucket = await maintenanceMetadataCollection.findOne({ _id: `autocomplete_bucket:all:${p}` });
+              }
+            }
+
+            if (mdBucket && Array.isArray(mdBucket.items)) {
+              const filteredItems = mdBucket.items.filter((item) => {
+                const n = String(item?.name || '').toLowerCase();
+                return n.includes(query);
+              });
+
+              const results = filteredItems
+                .slice()
+                .sort((a, b) => {
+                  const an = String(a?.name || '').toLowerCase();
+                  const bn = String(b?.name || '').toLowerCase();
+                  const aStarts = an.startsWith(query);
+                  const bStarts = bn.startsWith(query);
+                  if (aStarts !== bStarts) return aStarts ? -1 : 1;
+                  const aContains = an.includes(query);
+                  const bContains = bn.includes(query);
+                  if (aContains !== bContains) return aContains ? -1 : 1;
+                  return Number(b?.score || 0) - Number(a?.score || 0);
+                })
+                .slice(0, limit)
+                .map((item) => ({
+                  type: item.type,
+                  id: item.id,
+                  name: item.name,
+                  title: item.name,
+                  score: item.score,
+                  popularity: item.popularity,
+                  boardgamerank: item.boardgamerank
+                }));
+
+              if (results.length > 0) {
+                return returnAutocomplete({ results, source: 'astra-metadata-buckets' });
+              }
+            }
+          } catch (e) {
+            console.warn('[autocomplete] metadata bucket lookup failed:', e?.message || e);
+          }
+
+          // Astra live fallback (no static file): vector search + lexical rerank.
+          const liveMatches = [];
+          const liveSeen = new Set();
+          const rawQuery = String(qs.query || '').trim();
+          const queryLower = query;
+
+          const pushLive = (type, row, opts = {}) => {
+            const name = row?.name || row?.title || row?.name0;
+            const id = row?.id || row?._id || row?.bggid;
+            if (!name) return;
+
+            const nameLower = String(name).toLowerCase();
+            const key = `${type}:${String(id || '').toLowerCase()}:${nameLower}`;
+            if (liveSeen.has(key)) return;
+            liveSeen.add(key);
+
+            const starts = nameLower.startsWith(queryLower);
+            const contains = nameLower.includes(queryLower);
+
+            const queryTokens = queryLower.split(' ').filter(Boolean);
+            const nameTokens = nameLower.split(' ').filter(Boolean);
+            const allTokensPresent = queryTokens.length > 0 && queryTokens.every((token) => nameLower.includes(token));
+            const tokensPrefixAligned = queryTokens.length > 0
+              && queryTokens.every((token, idx) => String(nameTokens[idx] || '').startsWith(token));
+
+            const lexicalBoost = starts
+              ? 2.2
+              : tokensPrefixAligned
+                ? 1.6
+                : contains
+                  ? 0.45
+                  : allTokensPresent
+                    ? 0.25
+                    : 0;
+            const similarity = Number(opts.similarity || 0);
+            const popularityBoost = Number(opts.popularity || 0) / 1000;
+            const rankBoost = Number(opts.boardgamerank || 0) > 0 ? (1 / Math.max(1, Number(opts.boardgamerank))) : 0;
+            const combinedScore = similarity + lexicalBoost + popularityBoost + rankBoost;
+
+            liveMatches.push({
+              type,
+              id,
+              name,
+              title: name,
+              score: combinedScore,
+              popularity: opts.popularity,
+              boardgamerank: opts.boardgamerank
+            });
+          };
+
+          try {
+            const embedding = await generateEmbedding(rawQuery || queryLower);
+
+            if (scope === 'media' || scope === 'all') {
+              const mediaLiveCollections = [
+                { name: 'movies2026', type: 'movie' },
+                { name: 'tvshows2026', type: 'tv' }
+              ];
+
+              for (const c of mediaLiveCollections) {
+                // eslint-disable-next-line no-await-in-loop
+                const rows = await db.collection(c.name).find(
+                  {},
+                  {
+                    sort: { $vector: embedding },
+                    includeSimilarity: true,
+                    limit: Math.min(250, Math.max(limit * 15, 120)),
+                    projection: { $vector: 0 }
+                  }
+                ).toArray();
+
+                for (const row of rows) {
+                  pushLive(c.type, row, {
+                    similarity: row?.$similarity,
+                    popularity: row?.popularity
+                  });
+                }
+              }
+            }
+
+            if (scope === 'boardgames' || scope === 'all') {
+              const boardgameCollection = getCollection({ name: 'bgg_board_games', type: 'boardgame', keyspace: 'boardgames' });
+              const rows = await boardgameCollection.find(
+                {},
+                {
+                  sort: { $vector: embedding },
+                  includeSimilarity: true,
+                  limit: Math.min(250, Math.max(limit * 15, 120)),
+                  projection: { $vector: 0 }
+                }
+              ).toArray();
+
+              for (const row of rows) {
+                pushLive('boardgame', row, {
+                  similarity: row?.$similarity,
+                  boardgamerank: row?.boardgamerank
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('[autocomplete] live vector lookup failed:', e?.message || e);
+          }
+
+          if (liveMatches.length > 0) {
+            liveMatches.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+            return returnAutocomplete({ results: liveMatches.slice(0, limit), source: 'astra-live-vector' });
+          }
+
+          return returnAutocomplete({ results: [], source: 'astra-empty' });
       }
 
       case "similar": {

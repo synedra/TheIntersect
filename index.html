@@ -94,7 +94,7 @@
       align-items: center;
       gap: 10px;
       flex-wrap: nowrap;
-      overflow-x: auto;
+      overflow: visible;
       padding-bottom: 2px;
     }
 
@@ -916,13 +916,20 @@
 
     /* Autocomplete suggestions */
     .results {
-      margin-top: 6px;
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      margin-top: 0;
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 12px;
       overflow: hidden;
       background: rgba(45, 56, 71, 0.5);
       box-shadow: var(--shadow-soft);
       backdrop-filter: blur(18px) saturate(108%);
+      z-index: 220;
+      max-height: min(60vh, 520px);
+      overflow-y: auto;
     }
 
     .resultItem {
@@ -933,6 +940,7 @@
       justify-content: space-between;
       gap: 10px;
       align-items: center;
+      color: var(--text-main);
     }
 
     .resultItem:last-child {

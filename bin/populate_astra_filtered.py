@@ -44,7 +44,6 @@ def init_astra_collections():
             COLLECTION_NAME,
             dimension=EMBEDDING_DIMENSIONS,
             metric="cosine",
-            indexing={"deny": ["none"]}  # Example indexed fields
         )
         print(f"✅ Created new collection: {COLLECTION_NAME} with index on everything")
     except Exception as e:
