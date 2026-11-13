@@ -16,8 +16,10 @@ let discoverCache = {};
 let genreCache = {};
 // In-memory cache for autocomplete responses
 const AUTOCOMPLETE_CACHE_TTL_MS = 20_000;
+const AUTOCOMPLETE_MIN_QUERY_LEN = 3;
 const autocompleteResponseCache = new Map();
-let autocompleteEntriesUnavailable = false;
+// Keep disabled unless the collection is explicitly repaired.
+let autocompleteEntriesUnavailable = true;
 
 function getAutocompleteCacheKey({ scope, query, limit }) {
   return `${scope}:${query}:${limit}`;
@@ -51,6 +53,56 @@ function normalizeAutocompleteQuery(value) {
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function tokenizeAutocomplete(value) {
+  return normalizeAutocompleteQuery(value).split(' ').filter(Boolean);
+}
+
+function isTokenWindowPrefixMatch(name, query) {
+  const nameTokens = tokenizeAutocomplete(name);
+  const queryTokens = tokenizeAutocomplete(query);
+  if (queryTokens.length === 0 || nameTokens.length < queryTokens.length) return false;
+
+  for (let start = 0; start <= (nameTokens.length - queryTokens.length); start += 1) {
+    let ok = true;
+    for (let i = 0; i < queryTokens.length; i += 1) {
+      if (!nameTokens[start + i].startsWith(queryTokens[i])) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return true;
+  }
+
+  return false;
+}
+
+function getAutocompleteLexicalFlags(name, query) {
+  const n = String(name || '').toLowerCase();
+  const q = String(query || '').toLowerCase();
+  return {
+    starts: n.startsWith(q),
+    tokenPrefix: isTokenWindowPrefixMatch(n, q),
+    contains: n.includes(q)
+  };
+}
+
+function getAutocompleteTypeScope(scope) {
+  const normalizedScope = String(scope || '').toLowerCase();
+  if (normalizedScope === 'movies' || normalizedScope === 'movie') {
+    return { storageScopes: ['movies', 'media'], allowedTypes: new Set(['movie']) };
+  }
+  if (normalizedScope === 'tvshows' || normalizedScope === 'tvshow' || normalizedScope === 'tv') {
+    return { storageScopes: ['tvshows', 'media'], allowedTypes: new Set(['tv', 'tvshow']) };
+  }
+  if (normalizedScope === 'boardgames' || normalizedScope === 'boardgame') {
+    return { storageScopes: ['boardgames'], allowedTypes: new Set(['boardgame']) };
+  }
+  if (normalizedScope === 'all') {
+    return { storageScopes: ['all'], allowedTypes: null };
+  }
+  return { storageScopes: ['media'], allowedTypes: new Set(['movie', 'tv', 'tvshow']) };
 }
 
 async function generateEmbedding(text) {
@@ -1055,10 +1107,20 @@ export async function handler(event) {
       case "autocomplete": {
           const query = normalizeAutocompleteQuery(qs.query || "");
           const limit = Math.max(1, Math.min(25, parseInt(qs.limit, 10) || 10));
-          if (query.length < 2) return { statusCode: 200, body: JSON.stringify({ results: [] }) };
+          if (query.length < AUTOCOMPLETE_MIN_QUERY_LEN) return { statusCode: 200, body: JSON.stringify({ results: [] }) };
 
-          const scope = ['media', 'boardgames', 'all'].includes(qs.scope) ? qs.scope : 'media';
-          const cacheKey = getAutocompleteCacheKey({ scope, query, limit });
+          const requestedScope = String(qs.scope || 'media').toLowerCase();
+          const { storageScopes, allowedTypes } = getAutocompleteTypeScope(requestedScope);
+          const primaryScope = storageScopes[0] || 'media';
+          const queryVariants = [query];
+          const articleStrippedQuery = query.replace(/^(the|a|an)\s+/, '');
+          if (articleStrippedQuery && articleStrippedQuery !== query) {
+            queryVariants.push(articleStrippedQuery);
+          }
+          if (!/^(the|a|an)\s+/i.test(query)) {
+            queryVariants.push(`the ${query}`);
+          }
+          const cacheKey = getAutocompleteCacheKey({ scope: requestedScope || primaryScope, query, limit });
 
           const cachedPayload = getCachedAutocomplete(cacheKey);
           if (cachedPayload) {
@@ -1073,9 +1135,9 @@ export async function handler(event) {
           // Preferred path: dedicated autocomplete entries collection.
           if (!autocompleteEntriesUnavailable) {
           try {
-            const scopeFilter = scope === 'all'
+            const scopeFilter = requestedScope === 'all'
               ? { $in: ['all', 'media', 'boardgames'] }
-              : { $in: [scope, 'all'] };
+              : { $in: Array.from(new Set([...storageScopes, 'all'])) };
 
             const entryRows = await autocompleteEntriesCollection.find(
               {
@@ -1092,10 +1154,12 @@ export async function handler(event) {
               const contains = [];
 
               for (const row of entryRows) {
+                if (allowedTypes && !allowedTypes.has(String(row.type || '').toLowerCase())) continue;
                 const searchName = String(row.searchName || row.name || row.title || '').toLowerCase();
                 if (!searchName) continue;
-                if (searchName.startsWith(query)) starts.push(row);
-                else if (searchName.includes(query)) contains.push(row);
+                const flags = getAutocompleteLexicalFlags(searchName, query);
+                if (flags.starts) starts.push(row);
+                else if (flags.tokenPrefix || flags.contains) contains.push(row);
               }
 
               const rankedRows = [...starts, ...contains].sort((a, b) => {
@@ -1139,88 +1203,41 @@ export async function handler(event) {
           }
 
           // Preferred path: prefix bucket lookup in Astra collection.
-          let bucket = null;
-          try {
-            const maxBucketPrefixLen = Math.min(8, query.length);
-            for (let len = maxBucketPrefixLen; len >= 2 && !bucket; len -= 1) {
-              const p = query.slice(0, len);
-              // eslint-disable-next-line no-await-in-loop
-              bucket = await autocompleteBucketsCollection.findOne({ _id: `${scope}:${p}` });
-              if (!bucket && scope !== 'all') {
-                // eslint-disable-next-line no-await-in-loop
-                bucket = await autocompleteBucketsCollection.findOne({ _id: `all:${p}` });
+          for (const queryCandidate of queryVariants) {
+            let bucket = null;
+            try {
+              const maxBucketPrefixLen = Math.min(8, queryCandidate.length);
+              for (let len = maxBucketPrefixLen; len >= 2 && !bucket; len -= 1) {
+                const p = queryCandidate.slice(0, len);
+                for (const s of storageScopes) {
+                  // eslint-disable-next-line no-await-in-loop
+                  bucket = await autocompleteBucketsCollection.findOne({ _id: `${s}:${p}` });
+                  if (bucket) break;
+                }
+                if (!bucket && !storageScopes.includes('all')) {
+                  // eslint-disable-next-line no-await-in-loop
+                  bucket = await autocompleteBucketsCollection.findOne({ _id: `all:${p}` });
+                }
               }
-            }
-          } catch (e) {
-            console.warn('[autocomplete] bucket lookup failed:', e?.message || e);
-          }
-
-          if (bucket && Array.isArray(bucket.items)) {
-            const filteredItems = bucket.items.filter((item) => {
-              const n = String(item?.name || '').toLowerCase();
-              return n.includes(query);
-            });
-
-            const results = filteredItems
-              .slice()
-              .sort((a, b) => {
-                const an = String(a?.name || '').toLowerCase();
-                const bn = String(b?.name || '').toLowerCase();
-                const aStarts = an.startsWith(query);
-                const bStarts = bn.startsWith(query);
-                if (aStarts !== bStarts) return aStarts ? -1 : 1;
-                const aContains = an.includes(query);
-                const bContains = bn.includes(query);
-                if (aContains !== bContains) return aContains ? -1 : 1;
-                return Number(b?.score || 0) - Number(a?.score || 0);
-              })
-              .slice(0, limit)
-              .map((item) => ({
-                type: item.type,
-                id: item.id,
-                name: item.name,
-                title: item.name,
-                score: item.score,
-                popularity: item.popularity,
-                boardgamerank: item.boardgamerank
-              }));
-
-            if (results.length > 0) {
-              return returnAutocomplete({ results, source: 'astra-buckets' });
-            }
-          }
-
-          // Alternate prefix-bucket path stored in maintenance metadata.
-          try {
-            let mdBucket = null;
-            const maxBucketPrefixLen = Math.min(8, query.length);
-            for (let len = maxBucketPrefixLen; len >= 2 && !mdBucket; len -= 1) {
-              const p = query.slice(0, len);
-              // eslint-disable-next-line no-await-in-loop
-              mdBucket = await maintenanceMetadataCollection.findOne({ _id: `autocomplete_bucket:${scope}:${p}` });
-              if (!mdBucket && scope !== 'all') {
-                // eslint-disable-next-line no-await-in-loop
-                mdBucket = await maintenanceMetadataCollection.findOne({ _id: `autocomplete_bucket:all:${p}` });
-              }
+            } catch (e) {
+              console.warn('[autocomplete] bucket lookup failed:', e?.message || e);
             }
 
-            if (mdBucket && Array.isArray(mdBucket.items)) {
-              const filteredItems = mdBucket.items.filter((item) => {
-                const n = String(item?.name || '').toLowerCase();
-                return n.includes(query);
+            if (bucket && Array.isArray(bucket.items)) {
+              const filteredItems = bucket.items.filter((item) => {
+                if (allowedTypes && !allowedTypes.has(String(item?.type || '').toLowerCase())) return false;
+                const flags = getAutocompleteLexicalFlags(item?.name || '', queryCandidate);
+                return flags.starts || flags.tokenPrefix || flags.contains;
               });
 
               const results = filteredItems
                 .slice()
                 .sort((a, b) => {
-                  const an = String(a?.name || '').toLowerCase();
-                  const bn = String(b?.name || '').toLowerCase();
-                  const aStarts = an.startsWith(query);
-                  const bStarts = bn.startsWith(query);
-                  if (aStarts !== bStarts) return aStarts ? -1 : 1;
-                  const aContains = an.includes(query);
-                  const bContains = bn.includes(query);
-                  if (aContains !== bContains) return aContains ? -1 : 1;
+                  const af = getAutocompleteLexicalFlags(a?.name || '', queryCandidate);
+                  const bf = getAutocompleteLexicalFlags(b?.name || '', queryCandidate);
+                  if (af.starts !== bf.starts) return af.starts ? -1 : 1;
+                  if (af.tokenPrefix !== bf.tokenPrefix) return af.tokenPrefix ? -1 : 1;
+                  if (af.contains !== bf.contains) return af.contains ? -1 : 1;
                   return Number(b?.score || 0) - Number(a?.score || 0);
                 })
                 .slice(0, limit)
@@ -1235,14 +1252,72 @@ export async function handler(event) {
                 }));
 
               if (results.length > 0) {
-                return returnAutocomplete({ results, source: 'astra-metadata-buckets' });
+                return returnAutocomplete({ results, source: 'astra-buckets' });
+              }
+            }
+          }
+
+          // Alternate prefix-bucket path stored in maintenance metadata.
+          try {
+            for (const queryCandidate of queryVariants) {
+              let mdBucket = null;
+              const maxBucketPrefixLen = Math.min(8, queryCandidate.length);
+              for (let len = maxBucketPrefixLen; len >= 2 && !mdBucket; len -= 1) {
+                const p = queryCandidate.slice(0, len);
+                for (const s of storageScopes) {
+                  // eslint-disable-next-line no-await-in-loop
+                  mdBucket = await maintenanceMetadataCollection.findOne({ _id: `autocomplete_bucket:${s}:${p}` });
+                  if (mdBucket) break;
+                }
+                if (!mdBucket && !storageScopes.includes('all')) {
+                  // eslint-disable-next-line no-await-in-loop
+                  mdBucket = await maintenanceMetadataCollection.findOne({ _id: `autocomplete_bucket:all:${p}` });
+                }
+              }
+
+              if (mdBucket && Array.isArray(mdBucket.items)) {
+                const filteredItems = mdBucket.items.filter((item) => {
+                  if (allowedTypes && !allowedTypes.has(String(item?.type || '').toLowerCase())) return false;
+                  const flags = getAutocompleteLexicalFlags(item?.name || '', queryCandidate);
+                  return flags.starts || flags.tokenPrefix || flags.contains;
+                });
+
+                const results = filteredItems
+                  .slice()
+                  .sort((a, b) => {
+                    const af = getAutocompleteLexicalFlags(a?.name || '', queryCandidate);
+                    const bf = getAutocompleteLexicalFlags(b?.name || '', queryCandidate);
+                    if (af.starts !== bf.starts) return af.starts ? -1 : 1;
+                    if (af.tokenPrefix !== bf.tokenPrefix) return af.tokenPrefix ? -1 : 1;
+                    if (af.contains !== bf.contains) return af.contains ? -1 : 1;
+                    return Number(b?.score || 0) - Number(a?.score || 0);
+                  })
+                  .slice(0, limit)
+                  .map((item) => ({
+                    type: item.type,
+                    id: item.id,
+                    name: item.name,
+                    title: item.name,
+                    score: item.score,
+                    popularity: item.popularity,
+                    boardgamerank: item.boardgamerank
+                  }));
+
+                if (results.length > 0) {
+                  return returnAutocomplete({ results, source: 'astra-metadata-buckets' });
+                }
               }
             }
           } catch (e) {
             console.warn('[autocomplete] metadata bucket lookup failed:', e?.message || e);
           }
 
-          // Astra live fallback (no static file): vector search + lexical rerank.
+          // Optional semantic fallback (disabled by default for pure lexical autocomplete).
+          if (qs.semantic !== 'true') {
+            return returnAutocomplete({ results: [], source: 'astra-prefix-empty' });
+          }
+
+          // Astra live fallback: vector search + lexical rerank.
           const liveMatches = [];
           const liveSeen = new Set();
           const rawQuery = String(qs.query || '').trim();
@@ -1295,7 +1370,7 @@ export async function handler(event) {
           try {
             const embedding = await generateEmbedding(rawQuery || queryLower);
 
-            if (scope === 'media' || scope === 'all') {
+            if (['media', 'movies', 'movie', 'tvshows', 'tvshow', 'tv', 'all'].includes(requestedScope)) {
               const mediaLiveCollections = [
                 { name: 'movies2026', type: 'movie' },
                 { name: 'tvshows2026', type: 'tv' }
@@ -1308,7 +1383,7 @@ export async function handler(event) {
                   {
                     sort: { $vector: embedding },
                     includeSimilarity: true,
-                    limit: Math.min(250, Math.max(limit * 15, 120)),
+                    limit: Math.min(120, Math.max(limit * 8, 50)),
                     projection: { $vector: 0 }
                   }
                 ).toArray();
@@ -1319,17 +1394,20 @@ export async function handler(event) {
                     popularity: row?.popularity
                   });
                 }
+
+                // If we already have enough candidates, avoid extra vector calls.
+                if (liveMatches.length >= (limit * 4)) break;
               }
             }
 
-            if (scope === 'boardgames' || scope === 'all') {
+            if (['boardgames', 'boardgame', 'all'].includes(requestedScope)) {
               const boardgameCollection = getCollection({ name: 'bgg_board_games', type: 'boardgame', keyspace: 'boardgames' });
               const rows = await boardgameCollection.find(
                 {},
                 {
                   sort: { $vector: embedding },
                   includeSimilarity: true,
-                  limit: Math.min(250, Math.max(limit * 15, 120)),
+                  limit: Math.min(120, Math.max(limit * 8, 50)),
                   projection: { $vector: 0 }
                 }
               ).toArray();
@@ -1367,11 +1445,13 @@ export async function handler(event) {
         
         // 1. Find the source item and its vector
         let sourceVector = null;
+        let sourceItem = null;
         for (const collInfo of allCollections) {
             try {
                 const collection = db.collection(collInfo.name);
-                const result = await collection.findOne({ _id: itemId }, { projection: { $vector: 1 } });
+                const result = await collection.findOne({ _id: itemId }, { projection: { $vector: 1, title: 1, name: 1, overview: 1, genres: 1 } });
                 if (result) {
+                     sourceItem = result;
                      console.log(`[Similar] Found item in ${collInfo.name}. Vector present: ${!!result.$vector}`);
                      if (result.$vector) {
                         // Ensure vector is a plain array (handle driver specifics)
@@ -1382,32 +1462,46 @@ export async function handler(event) {
                         } else if (result.$vector.data && Array.isArray(result.$vector.data)) {
                              // Fallback for some other driver versions
                              sourceVector = result.$vector.data;
-                        } else {
-                             // Last resort, try object.values or assume it is usable if not caught above,
-                             // specific error showed {"_vector": ...} so the second clause should catch it.
-                             sourceVector = result.$vector; 
                         }
-                        break;
                      }
+                     break;
                 }
             } catch (e) {
                 console.error(`[Similar] Error checking collection ${collInfo.name}:`, e);
             }
         }
 
+        // Some legacy docs store vectors in a non-array binary wrapper. If so,
+        // create a query embedding from source text.
+        if (!sourceVector && sourceItem) {
+          try {
+            const sourceText = [sourceItem.title || sourceItem.name || '', sourceItem.overview || '']
+              .join('\n')
+              .trim();
+            if (sourceText) {
+              sourceVector = await generateEmbedding(sourceText.slice(0, 6000));
+              console.log('[Similar] Using generated embedding fallback for source item');
+            }
+          } catch (e) {
+            console.warn('[Similar] Failed to generate fallback embedding:', e?.message || e);
+          }
+        }
+
         if (!sourceVector) {
           console.log("[Similar] No source vector found. Falling back to Genre match.");
           
-          let sourceGenres = null;
-          // Find genres from source item
-          for (const collInfo of allCollections) {
-               try {
-                   const result = await db.collection(collInfo.name).findOne({ _id: itemId });
-                   if (result && result.genres) {
-                       sourceGenres = result.genres; // Array of objects or strings
-                       break;
-                   }
-               } catch(e) {}
+          let sourceGenres = sourceItem?.genres || null;
+          // Find genres from source item if we don't already have it
+          if (!sourceGenres) {
+            for (const collInfo of allCollections) {
+                 try {
+                     const result = await db.collection(collInfo.name).findOne({ _id: itemId }, { projection: { genres: 1 } });
+                     if (result && result.genres) {
+                         sourceGenres = result.genres; // Array of objects or strings
+                         break;
+                     }
+                 } catch(e) {}
+            }
           }
           
           if (!sourceGenres || sourceGenres.length === 0) {
@@ -1423,7 +1517,12 @@ export async function handler(event) {
           for (const collInfo of allCollections) {
                try {
                    const movies = await db.collection(collInfo.name).find(
-                       { "genres.name": { $in: genreNames } }, 
+                       {
+                         $or: [
+                           { "genres.name": { $in: genreNames } },
+                           { "genres": { $in: genreNames } }
+                         ]
+                       }, 
                        { limit: limit + 2, sort: { popularity: -1 } } 
                    ).toArray();
                    

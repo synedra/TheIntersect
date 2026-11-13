@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "netlify:dev": "netlify dev",
     "test:tmdb-auth": "node bin/test_tmdb_auth.js",
+    "data:refresh-daily": "python3 bin/daily_refresh_data.py",
+    "data:freshness": "python3 bin/daily_refresh_data.py --status-only",
     "autocomplete:build-buckets": "python3 bin/build_autocomplete_buckets.py",
     "autocomplete:build-buckets:legacy": "node bin/build_autocomplete_buckets.js",
     "autocomplete:build-metadata-buckets": "node bin/build_autocomplete_metadata_buckets.js"

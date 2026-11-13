@@ -698,17 +698,55 @@ let selectedSuggestionIndex = -1;
 let autocompleteRequestSeq = 0;
 let autocompleteDebounceTimer = null;
 let autocompleteAbortController = null;
+let lastAutocompleteNetworkQuery = '';
+let lastAutocompleteNetworkAt = 0;
 const autocompleteCache = new Map();
+const AUTOCOMPLETE_MIN_QUERY_LEN = 3;
 
-async function fetchAutocompleteSuggestions(query, signal) {
+function tokenizeAutocompleteText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+}
+
+function isTokenWindowPrefixMatch(name, query) {
+  const nameTokens = tokenizeAutocompleteText(name);
+  const queryTokens = tokenizeAutocompleteText(query);
+  if (queryTokens.length === 0 || nameTokens.length < queryTokens.length) return false;
+
+  for (let start = 0; start <= (nameTokens.length - queryTokens.length); start += 1) {
+    let ok = true;
+    for (let i = 0; i < queryTokens.length; i += 1) {
+      if (!nameTokens[start + i].startsWith(queryTokens[i])) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return true;
+  }
+
+  return false;
+}
+
+function autocompleteLexicalMatch(name, query) {
+  const n = String(name || '').toLowerCase();
+  const q = String(query || '').toLowerCase();
+  if (!n || !q) return false;
+  return n.startsWith(q) || isTokenWindowPrefixMatch(n, q) || n.includes(q);
+}
+
+function getLocalAutocompleteSuggestions(query) {
   const normalized = String(query || '').trim().toLowerCase();
-  if (!normalized || normalized.length < 2) return [];
+  if (!normalized || normalized.length < AUTOCOMPLETE_MIN_QUERY_LEN) return [];
 
   const scope = searchMode.boardgames ? 'boardgames' : 'media';
   const cacheKey = `${scope}:${normalized}`;
-  if (autocompleteCache.has(cacheKey)) return autocompleteCache.get(cacheKey);
+  if (autocompleteCache.has(cacheKey)) return autocompleteCache.get(cacheKey) || [];
 
-  // Fast path: refine from the longest cached prefix for this scope.
   let bestPrefixRows = null;
   let bestPrefixLength = 0;
   for (const [key, rows] of autocompleteCache.entries()) {
@@ -722,16 +760,74 @@ async function fetchAutocompleteSuggestions(query, signal) {
     }
   }
 
-  if (bestPrefixRows) {
-    const quickRows = bestPrefixRows
-      .filter((item) => String(item?.name || item?.title || '').toLowerCase().includes(normalized))
-      .slice(0, 10);
+  if (!bestPrefixRows) return [];
 
-    if (quickRows.length > 0) {
-      autocompleteCache.set(cacheKey, quickRows);
-      return quickRows;
-    }
+  const quickRows = bestPrefixRows
+    .filter((item) => autocompleteLexicalMatch(item?.name || item?.title || '', normalized))
+    .slice(0, 10);
+
+  if (quickRows.length > 0) {
+    autocompleteCache.set(cacheKey, quickRows);
+    return quickRows;
   }
+
+  return [];
+}
+
+function renderAutocompleteSuggestions(matches, suggestionsDiv) {
+  suggestionsDiv.innerHTML = matches.map((item, index) => {
+    const name = item.name || item.title || '';
+    const type = item.type || (searchMode.boardgames ? 'boardgame' : 'movie');
+    const typeLabel = type === 'boardgame' ? '🎲 Game' :
+                     type === 'person' ? '👤 Person' :
+                     type === 'genre' ? '🎭 Genre' :
+                     type === 'tv' ? '📺 TV' : '🎬 Movie';
+
+    return `
+      <div class="resultItem ${index === selectedSuggestionIndex ? 'selected' : ''}" data-index="${index}" data-id="${item.id || item.movieId}" data-name="${escapeHtml(name)}" data-type="${type}">
+        <span>${escapeHtml(name)}</span>
+        <span class="suggestionType">${typeLabel}</span>
+      </div>
+    `;
+  }).join('');
+
+  suggestionsDiv.style.display = 'block';
+
+  suggestionsDiv.querySelectorAll('.resultItem').forEach(item => {
+    item.addEventListener('click', () => {
+      const name = item.dataset.name;
+      const id = item.dataset.id;
+      const type = item.dataset.type;
+
+      if (type === 'boardgame' || type === 'movie' || type === 'tv') {
+        if (type === 'boardgame') addFilter('boardgame_id', id, name);
+        else addFilter('movie_id', id, name);
+      } else if (type === 'person') {
+        addFilter('person', name, name);
+      } else if (type === 'genre') {
+        addFilter('genre', name, name);
+      }
+
+      currentQuery = '';
+      document.getElementById('searchInput').value = '';
+      syncSearchInputPlaceholder();
+      suggestionsDiv.style.display = 'none';
+    });
+  });
+}
+
+async function fetchAutocompleteSuggestions(query, signal) {
+  const normalized = String(query || '').trim().toLowerCase();
+  if (!normalized || normalized.length < AUTOCOMPLETE_MIN_QUERY_LEN) return [];
+
+  const scope = searchMode.boardgames
+    ? 'boardgames'
+    : (searchMode.tvshows ? 'tvshows' : 'movies');
+  const cacheKey = `${scope}:${normalized}`;
+  if (autocompleteCache.has(cacheKey)) return autocompleteCache.get(cacheKey);
+
+  const localRows = getLocalAutocompleteSuggestions(normalized);
+  if (localRows.length > 0) return localRows;
 
   try {
     const data = await astraApi('autocomplete', { query: normalized, scope, limit: 10 }, { signal });
@@ -756,8 +852,22 @@ async function showAutocomplete(query) {
   const suggestionsDiv = document.getElementById('suggestions');
   if (!suggestionsDiv) return;
 
-  if (!query || query.length < 2) {
+  if (!query || query.length < AUTOCOMPLETE_MIN_QUERY_LEN) {
     suggestionsDiv.style.display = 'none';
+    return;
+  }
+
+  const localMatches = getLocalAutocompleteSuggestions(query);
+  if (localMatches.length > 0) {
+    renderAutocompleteSuggestions(localMatches, suggestionsDiv);
+  }
+
+  const normalized = String(query || '').trim().toLowerCase();
+  const now = Date.now();
+  const isProgressiveQuery = normalized.startsWith(lastAutocompleteNetworkQuery);
+  const isTypingFast = (now - lastAutocompleteNetworkAt) < 220;
+
+  if (localMatches.length > 0 && (normalized.length <= 6 || (isProgressiveQuery && isTypingFast))) {
     return;
   }
 
@@ -766,6 +876,8 @@ async function showAutocomplete(query) {
     try { autocompleteAbortController.abort(); } catch (_) {}
   }
   autocompleteAbortController = new AbortController();
+  lastAutocompleteNetworkQuery = normalized;
+  lastAutocompleteNetworkAt = now;
 
   const matches = await fetchAutocompleteSuggestions(query, autocompleteAbortController.signal);
   if (reqId !== autocompleteRequestSeq) return;
@@ -775,50 +887,7 @@ async function showAutocomplete(query) {
     return;
   }
 
-  suggestionsDiv.innerHTML = matches.map((item, index) => {
-    const name = item.name || item.title || '';
-    const type = item.type || (searchMode.boardgames ? 'boardgame' : 'movie');
-    const typeLabel = type === 'boardgame' ? '🎲 Game' :
-                     type === 'person' ? '👤 Person' :
-                     type === 'genre' ? '🎭 Genre' :
-                     type === 'tv' ? '📺 TV' : '🎬 Movie';
-
-    return `
-      <div class="resultItem ${index === selectedSuggestionIndex ? 'selected' : ''}" data-index="${index}" data-id="${item.id || item.movieId}" data-name="${escapeHtml(name)}" data-type="${type}">
-        <span>${escapeHtml(name)}</span>
-        <span class="suggestionType">${typeLabel}</span>
-      </div>
-    `;
-  }).join('');
-
-  suggestionsDiv.style.display = 'block';
-
-  // Add click handlers
-  suggestionsDiv.querySelectorAll('.resultItem').forEach(item => {
-    item.addEventListener('click', () => {
-      const name = item.dataset.name;
-      const id = item.dataset.id;
-      const type = item.dataset.type;
-
-      if (type === 'boardgame' || type === 'movie' || type === 'tv') {
-        // For item suggestions, use content-specific ID filters.
-        if (type === 'boardgame') {
-          addFilter('boardgame_id', id, name);
-        } else {
-          addFilter('movie_id', id, name);
-        }
-      } else if (type === 'person') {
-        addFilter('person', name, name);
-      } else if (type === 'genre') {
-        addFilter('genre', name, name);
-      }
-
-      currentQuery = '';
-      document.getElementById('searchInput').value = '';
-      syncSearchInputPlaceholder();
-      suggestionsDiv.style.display = 'none';
-    });
-  });
+  renderAutocompleteSuggestions(matches, suggestionsDiv);
 }
 
 // Search input event handler
@@ -2508,9 +2577,9 @@ async function openMovieModal(movieId, contentType = 'movie') {
       castHtml = `
         <table style="width:100%; border-collapse: collapse; margin-top:8px; font-size:13px;">
           <thead>
-            <tr style="border-bottom: 1px solid #475569; text-align:left;">
-              <th style="padding:6px 4px; font-weight:600; color:#cbd5e1;">Actor</th>
-              <th style="padding:6px 4px; font-weight:600; color:#cbd5e1; text-align:right;">Character</th>
+            <tr style="border-bottom: 1px solid var(--border-soft); text-align:left;">
+              <th style="padding:6px 4px; font-weight:600; color:var(--text-main);">Actor</th>
+              <th style="padding:6px 4px; font-weight:600; color:var(--text-main); text-align:right;">Character</th>
             </tr>
           </thead>
           <tbody>
@@ -2518,11 +2587,11 @@ async function openMovieModal(movieId, contentType = 'movie') {
               const name = typeof c === 'object' ? c.name : c;
               const character = (typeof c === 'object' && c.character) ? c.character : "";
               return `
-                <tr style="border-bottom: 1px solid #334155;">
+                <tr style="border-bottom: 1px solid var(--border-soft);">
                   <td style="padding:6px 4px;">
-                    <span class="cast-link" data-name="${escapeHtml(name)}" style="font-weight:500; color:#60a5fa; cursor:pointer;">${escapeHtml(name)}</span>
+                    <span class="cast-link" data-name="${escapeHtml(name)}" style="font-weight:500; color:#0a84ff; cursor:pointer;">${escapeHtml(name)}</span>
                   </td>
-                  <td style="padding:6px 4px; color:#94a3b8; text-align:right;">${escapeHtml(character)}</td>
+                  <td style="padding:6px 4px; color:var(--text-muted); text-align:right;">${escapeHtml(character)}</td>
                 </tr>
               `;
             }).join("")}
@@ -2604,7 +2673,7 @@ async function openMovieModal(movieId, contentType = 'movie') {
         <div class="sectionTitle" style="margin-top: 0;">Rating</div>
         <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
             <span style="font-size:16px; font-weight:600;">⭐ ${movie.vote_average.toFixed(1)}</span>
-            <span style="color:#666; font-size:13px;">(${movie.vote_count || 0} votes)</span>
+          <span style="color:var(--text-muted); font-size:13px;">(${movie.vote_count || 0} votes)</span>
         </div>
         <div id="user-rating-section" style="margin-top: 12px;"></div>
         ` : ''}
@@ -2615,7 +2684,7 @@ async function openMovieModal(movieId, contentType = 'movie') {
         <div style="margin-top:8px; font-size:13px;">
             ${movie.original_language ? `
               <div ${spokenLanguagesStr ? `title="Available/Spoken Languages: ${escapeHtml(spokenLanguagesStr)}"` : ''} 
-                   style="${spokenLanguagesStr ? 'cursor: help; text-decoration-line: underline; text-decoration-style: dotted; text-decoration-color: #999;' : ''}">
+                    style="${spokenLanguagesStr ? 'cursor: help; text-decoration-line: underline; text-decoration-style: dotted; text-decoration-color: var(--text-muted);' : ''}">
                 <strong>Original Language:</strong> ${escapeHtml(getLanguageName(movie.original_language))}
               </div>` : ''}
             ${movie.production_countries && movie.production_countries.length > 0 ? `<div style="margin-top:4px;"><strong>Country:</strong> ${escapeHtml(movie.production_countries.join(', '))}</div>` : ''}
