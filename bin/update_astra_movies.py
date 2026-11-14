@@ -156,44 +156,116 @@ def update_item(media_type, item_id):
         if not title and not overview:
             return
 
-        # Structure rich data for frontend (main.js expectation)
-        
-        # 1. Cast
+        # Build a trimmed document to stay under Astra indexed-property limits.
         credits = data.get('credits', {})
-        # Extract cast as a flat array of actor names for easier querying
-        if 'cast' in credits:
-            data['cast'] = [actor.get('name') for actor in credits['cast'] if actor.get('name')]
-            data['cast_details'] = credits['cast'] # Frontend often looks here for full details
-        if 'crew' in credits:
-            data['crew'] = credits['crew']
+        cast_raw = credits.get('cast', []) if isinstance(credits, dict) else []
+        crew_raw = credits.get('crew', []) if isinstance(credits, dict) else []
 
-        # 2. Keywords
+        cast_details = []
+        cast_names = []
+        for actor in cast_raw[:20]:
+            name = actor.get('name')
+            if not name:
+                continue
+            cast_names.append(name)
+            cast_details.append({
+                'name': name,
+                'character': actor.get('character', ''),
+                'order': actor.get('order', 999),
+                'searchName': name.lower()
+            })
+
+        directors = [c.get('name') for c in crew_raw if c.get('job') == 'Director' and c.get('name')][:5]
+        writers = [c.get('name') for c in crew_raw if c.get('department') == 'Writing' and c.get('name')][:8]
+        producers = [c.get('name') for c in crew_raw if c.get('job') == 'Producer' and c.get('name')][:8]
+
         kws = data.get('keywords', {})
-        # Movie: {'keywords': [...]}, TV: {'results': [...]}
-        if 'keywords' in kws:
-            data['keywords'] = kws['keywords']
-        elif 'results' in kws:
-            data['keywords'] = kws['results']
+        keyword_rows = []
+        if isinstance(kws, dict):
+            if isinstance(kws.get('keywords'), list):
+                keyword_rows = kws.get('keywords', [])
+            elif isinstance(kws.get('results'), list):
+                keyword_rows = kws.get('results', [])
+        keyword_names = [k.get('name') for k in keyword_rows if isinstance(k, dict) and k.get('name')][:80]
 
-        # 3. Watch Providers
         wp = data.get('watch/providers', {})
-        if 'results' in wp:
-            data['watch_providers'] = wp['results']
+        wp_results = wp.get('results', {}) if isinstance(wp, dict) else {}
+        us_providers = wp_results.get('US', {}) if isinstance(wp_results, dict) else {}
+        watch_providers = {
+            'US': {
+                'stream': [p.get('provider_name') for p in us_providers.get('flatrate', []) if p.get('provider_name')],
+                'rent': [p.get('provider_name') for p in us_providers.get('rent', []) if p.get('provider_name')],
+                'buy': [p.get('provider_name') for p in us_providers.get('buy', []) if p.get('provider_name')],
+            }
+        }
+
+        base_doc = {
+            '_id': _id,
+            'type': media_type,
+            'tmdb_id': data.get('id'),
+            'original_language': data.get('original_language'),
+            'overview': overview,
+            'poster_path': data.get('poster_path'),
+            'backdrop_path': data.get('backdrop_path'),
+            'popularity': data.get('popularity'),
+            'vote_average': data.get('vote_average'),
+            'vote_count': data.get('vote_count'),
+            'genres': [g.get('name') for g in data.get('genres', []) if isinstance(g, dict) and g.get('name')],
+            'keywords': keyword_names,
+            'cast': cast_names,
+            'cast_details': cast_details,
+            'directors': directors,
+            'writers': writers,
+            'producers': producers,
+            'watch_providers': watch_providers,
+            'indexed_at': datetime.datetime.utcnow().isoformat(),
+        }
+
+        if media_type == 'movie':
+            base_doc.update({
+                'title': title,
+                'title_lower': title.lower() if title else '',
+                'original_title': data.get('original_title'),
+                'tagline': data.get('tagline'),
+                'runtime': data.get('runtime'),
+                'release_date': data.get('release_date'),
+                'status': data.get('status'),
+                'budget': data.get('budget'),
+                'revenue': data.get('revenue'),
+                'production_companies': [c.get('name') for c in data.get('production_companies', []) if isinstance(c, dict) and c.get('name')],
+                'imdb_id': (data.get('external_ids') or {}).get('imdb_id') if isinstance(data.get('external_ids'), dict) else None,
+                'homepage': data.get('homepage'),
+            })
+        else:
+            base_doc.update({
+                'name': title,
+                'name_lower': title.lower() if title else '',
+                'original_name': data.get('original_name'),
+                'tagline': data.get('tagline'),
+                'first_air_date': data.get('first_air_date'),
+                'last_air_date': data.get('last_air_date'),
+                'status': data.get('status'),
+                'number_of_seasons': data.get('number_of_seasons'),
+                'number_of_episodes': data.get('number_of_episodes'),
+                'creators': [c.get('name') for c in data.get('created_by', []) if isinstance(c, dict) and c.get('name')],
+                'networks': [n.get('name') for n in data.get('networks', []) if isinstance(n, dict) and n.get('name')],
+                'production_companies': [c.get('name') for c in data.get('production_companies', []) if isinstance(c, dict) and c.get('name')],
+                'imdb_id': (data.get('external_ids') or {}).get('imdb_id') if isinstance(data.get('external_ids'), dict) else None,
+                'homepage': data.get('homepage'),
+            })
 
         text_to_embed = f"{title}: {overview}"
         vector = get_embedding(text_to_embed)
         
         if vector:
-            data['$vector'] = vector
-            data['type'] = media_type
-            data['_id'] = _id
+            base_doc['$vector'] = vector
             
             target_collection_name = COLLECTIONS[media_type]
             collection = db.get_collection(target_collection_name)
             
             collection.find_one_and_replace(
                 {"_id": _id},
-                data,
+                base_doc,
                 upsert=True
             )
         else:

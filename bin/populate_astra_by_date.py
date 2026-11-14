@@ -1,11 +1,14 @@
+import argparse
 import requests
-import json
+import math
+import re
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from calendar import monthrange
 from dotenv import load_dotenv
 from astrapy import DataAPIClient
+from astrapy.info import CollectionDefinition
 from openai import OpenAI
 from tqdm import tqdm
 
@@ -43,8 +46,10 @@ def init_astra_collections():
     try:
         collection = database.create_collection(
             COLLECTION_NAME,
-            dimension=EMBEDDING_DIMENSIONS,
-            metric="cosine",
+            definition=CollectionDefinition.builder()
+            .set_vector_dimension(EMBEDDING_DIMENSIONS)
+            .set_vector_metric("cosine")
+            .build(),
         )
         print(f"✅ Created new collection: {COLLECTION_NAME} with index on everything")
     except Exception as e:
@@ -111,33 +116,55 @@ def get_last_processed_date(database):
         pass
     return None
 
+def normalize_search_name(value):
+    out = re.sub(r"[^a-z0-9\s]", " ", str(value or "").lower())
+    return re.sub(r"\s+", " ", out).strip()
+
+def build_autocomplete_doc(item_type, scope, item_id, name, score, source):
+    search_name = normalize_search_name(name)
+    if len(search_name) < 2:
+        return None
+    doc = {
+        "_id": f"{scope}:{item_type}:{item_id or '_'}:{search_name}",
+        "scope": scope,
+        "type": item_type,
+        "name": name,
+        "searchName": search_name,
+        "score": float(score),
+        "source": source,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    if item_id:
+        doc["id"] = item_id
+    return doc
+
 def create_autocomplete_documents(movie_details):
     """
-    Create flattened autocomplete documents from a movie.
-    Returns a list of dicts {name, type, id (optional)}.
+    Build autocomplete_entries documents (same shape as build_autocomplete_buckets.py)
+    for a movie, its top cast, and its genres, in both the "media" and "all" scopes.
     """
     documents = []
     title = movie_details.get('title')
-    movie_id = str(movie_details.get('id'))
-    
-    # 1. Movie title document
+    item_id = str(movie_details.get('id'))
+    popularity = float(movie_details.get('popularity') or 0)
+    score = popularity + math.log10(max(1, movie_details.get('vote_count') or 0))
+
+    entries = []
     if title:
-        documents.append({"name": title, "id": movie_id, "type": "movie"})
-
-    # 2. Cast member documents (limit to top 5)
-    cast = movie_details.get('credits', {}).get('cast', [])
-    for idx, actor in enumerate(cast[:5]):
-        actor_name = actor.get('name')
-        if actor_name:
-            documents.append({"name": actor_name, "type": "person"})
-
-    # 3. Genre documents
-    genres = movie_details.get('genres', [])
-    for genre in genres:
+        entries.append(("movie", item_id, title, score))
+    for actor in movie_details.get('credits', {}).get('cast', [])[:5]:
+        if actor.get('name'):
+            entries.append(("person", "", actor['name'], 10))
+    for genre in movie_details.get('genres', []):
         genre_name = genre['name'] if isinstance(genre, dict) else genre
         if genre_name:
-            documents.append({"name": genre_name, "type": "genre"})
-            
+            entries.append(("genre", "", genre_name, 8))
+
+    for item_type, entry_id, name, entry_score in entries:
+        for scope in ("media", "all"):
+            doc = build_autocomplete_doc(item_type, scope, entry_id, name, entry_score, "movie")
+            if doc:
+                documents.append(doc)
     return documents
 
 def create_embedding_text(movie_details):
@@ -235,13 +262,10 @@ def prepare_movie_document(movie_details, embedding):
     }
     return document
 
-def process_single_day(collection, date, stats, autocomplete_docs, seen_keys, json_path):
+def process_single_day(collection, autocomplete_col, date, stats, seen_keys):
     """
     Process a single day. If it has >500 pages, cap at 500 (API limit).
-    Returns the number of new documents written since last checkpoint.
     """
-    new_since_last_write = 0
-    
     # Check total pages for this day
     try:
         data = discover_movies_by_date(page=1, date_min=date, date_max=date)
@@ -250,11 +274,11 @@ def process_single_day(collection, date, stats, autocomplete_docs, seen_keys, js
             
     except Exception as e:
         print(f"\n⚠️  Error checking {date}: {e}")
-        return new_since_last_write
+        return
     
     # Skip if no results
     if total_results == 0:
-        return new_since_last_write
+        return
     
     # Cap at 500 pages if needed
     if total_pages > 500:
@@ -325,27 +349,15 @@ def process_single_day(collection, date, stats, autocomplete_docs, seen_keys, js
                     stats['errors'] += 1
                     print(f"⚠️  Error preparing movie {movie_id}: {e}")
                 
-                # Autocomplete doc creation
+                # Autocomplete entries, written straight to Astra
                 try:
-                    ac_docs = create_autocomplete_documents(movie_details)
-                    for doc in ac_docs:
-                        # Uniqueness check: ID for movies, Name for people/genres
-                        if doc.get('type') == 'movie':
-                            key = ('movie', doc.get('id'))
-                        else:
-                            key = (doc.get('type'), doc.get('name'))
-
-                        if key in seen_keys:
+                    for doc in create_autocomplete_documents(movie_details):
+                        if doc["_id"] in seen_keys:
                             continue
-                        seen_keys.add(key)
-                        autocomplete_docs.append(doc)
-                        new_since_last_write += 1
-                        if new_since_last_write >= 100:
-                            with open(json_path, "w") as f:
-                                json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
-                            new_since_last_write = 0
+                        seen_keys.add(doc["_id"])
+                        autocomplete_col.find_one_and_replace({"_id": doc["_id"]}, doc, upsert=True)
                 except Exception as e:
-                    print(f"⚠️  Error generating autocomplete doc for movie {movie_id}: {e}")
+                    print(f"⚠️  Error writing autocomplete entries for movie {movie_id}: {e}")
             
             # Batch insert all documents from this page
             if batch_documents:
@@ -370,11 +382,10 @@ def process_single_day(collection, date, stats, autocomplete_docs, seen_keys, js
             print(f"\n⚠️  Error on page {current_page}: {e}")
             stats['errors'] += 1
             break
-    
-    return new_since_last_write
 
-def crawl_and_populate_by_day():
+def crawl_and_populate_by_day(start, end, resume=True):
     collection, database = init_astra_collections()
+    autocomplete_col = database.get_collection("autocomplete_entries")
     
     stats = {
         'processed': 0,
@@ -385,56 +396,32 @@ def crawl_and_populate_by_day():
         'skipped_short': 0
     }
     
-    # Autocomplete export setup
-    autocomplete_docs = []
     seen_keys = set()
-    os.makedirs("public", exist_ok=True)
-    json_path = "public/autocomplete-fresh.json"
-    
-    # Check for last processed date
-    last_date = get_last_processed_date(database)
+
+    start_date, end_date = start, end
+    last_date = get_last_processed_date(database) if resume else None
     if last_date:
-        # Start from the day before the last processed date
-        start_date = datetime.strptime(last_date, "%Y-%m-%d") - timedelta(days=1)
-        print(f"\n📍 Resuming from {start_date.strftime('%Y-%m-%d')} (last processed: {last_date})")
-    else:
-        start_date = datetime(2025, 12, 31)
-        print(f"\n🆕 Starting fresh from {start_date.strftime('%Y-%m-%d')}")
-    
-    end_date = datetime(1930, 1, 1)
+        resume_from = datetime.strptime(last_date, "%Y-%m-%d") - timedelta(days=1)
+        if end_date <= resume_from < start_date:
+            start_date = resume_from
+            print(f"\n📍 Resuming from {start_date.strftime('%Y-%m-%d')} (last processed: {last_date})")
+    if start_date == start:
+        print(f"\n🆕 Starting from {start_date.strftime('%Y-%m-%d')}")
     current_date = start_date
     
     while current_date >= end_date:
         date_str = current_date.strftime("%Y-%m-%d")
         
         try:
-            new_since_last_write = process_single_day(
-                collection, date_str, stats, autocomplete_docs, seen_keys, json_path
-            )
-            
-            # Update metadata with current date
-            update_progress(database, date_str)
-            
-            # Write any remaining data
-            if new_since_last_write > 0:
-                with open(json_path, "w") as f:
-                    json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
-                    
+            process_single_day(collection, autocomplete_col, date_str, stats, seen_keys)
+            if resume:
+                update_progress(database, date_str)
         except KeyboardInterrupt:
             print("\n🛑 Stopping crawl...")
-            # Final write before exiting
-            with open(json_path, "w") as f:
-                json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
-            print(f"Saved {len(autocomplete_docs)} autocomplete entries before stopping")
             break
         
         # Move to previous day
         current_date -= timedelta(days=1)
-    
-    # Final write
-    with open(json_path, "w") as f:
-        json.dump(autocomplete_docs, f, ensure_ascii=False, indent=2)
-    print(f"Final export: {len(autocomplete_docs)} autocomplete entries to {json_path}")
     
     print(f"\n{'='*80}")
     print(f"🎉 CRAWL COMPLETE")
@@ -447,17 +434,27 @@ def crawl_and_populate_by_day():
     print(f"Errors: {stats['errors']:,}")
     print(f"{'='*80}\n")
 
+def parse_date(value):
+    return datetime.strptime(value, "%Y-%m-%d")
+
 def main():
+    parser = argparse.ArgumentParser(description="Crawl TMDB day by day (newest to oldest) into Astra DB.")
+    parser.add_argument("--start", type=parse_date, default=datetime(2025, 12, 31), help="Newest date, YYYY-MM-DD (default 2025-12-31)")
+    parser.add_argument("--end", type=parse_date, default=datetime(1930, 1, 1), help="Oldest date, YYYY-MM-DD (default 1930-01-01)")
+    parser.add_argument("--no-resume", action="store_true", help="Ignore and do not update the stored progress date")
+    args = parser.parse_args()
+    if args.end > args.start:
+        parser.error("--end must not be after --start")
     print("="*80)
     print("TMDB to Astra Vector Database Crawler (By Day)")
     print("="*80)
     print(f"\n⚙️  Configuration:")
-    print(f"   Date Range: 2025-12-31 → 1930-01-01 (day by day)")
+    print(f"   Date Range: {args.start:%Y-%m-%d} → {args.end:%Y-%m-%d} (day by day)")
     print(f"   Caps at 500 pages per day (API limit)")
     print(f"   Embedding Model: {EMBEDDING_MODEL}")
     print(f"   Embedding Dimensions: {EMBEDDING_DIMENSIONS}")
     print()
-    crawl_and_populate_by_day()
+    crawl_and_populate_by_day(args.start, args.end, resume=not args.no_resume)
 
 if __name__ == "__main__":
     main()

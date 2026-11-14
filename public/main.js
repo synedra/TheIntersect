@@ -534,9 +534,11 @@ function syncSearchInputPlaceholder() {
   }
 
   if (searchMode.boardgames) {
-    searchInput.placeholder = 'Search games, designers, publishers…';
+    searchInput.placeholder = 'Search Boardgames';
+  } else if (searchMode.tvshows) {
+    searchInput.placeholder = 'Search TV Shows';
   } else {
-    searchInput.placeholder = 'Search movies, actors, genres…';
+    searchInput.placeholder = 'Search Movies';
   }
 }
 

@@ -419,6 +419,10 @@ export async function handler(event) {
              }
         }
         
+        // A person selection with no free text is a direct (non-vector) lookup of everything
+        // that person appeared in, so default quality/availability narrowing must not apply.
+        const isDirectPersonSearch = !isBoardGameSearch && personList.length > 0 && (!query || query.length < 2);
+
         const filterConditions = [];
         const getTextVariants = (value) => {
           const base = String(value || '').trim();
@@ -497,7 +501,7 @@ export async function handler(event) {
             });
           });
             
-              if (!isBareGenre && (personList.length === 1 || genreList.length === 1 || keywordList.length === 1)) {
+              if (!isBareGenre && !isDirectPersonSearch && (personList.length === 1 || genreList.length === 1 || keywordList.length === 1)) {
                  filterConditions.push({ vote_average: { $gt: 7 } });
             }
             
@@ -530,7 +534,7 @@ export async function handler(event) {
             } else {
                  // Bare genre pill searches are a hot path; avoid expensive provider existence checks
                  // unless providers/payment mode was explicitly narrowed by the user.
-                 if (!isBareGenre) {
+                 if (!isBareGenre && !isDirectPersonSearch) {
                    const paymentClauses = [];
                    if (paymentTypes.includes('stream')) paymentClauses.push({ "watch_providers.US.stream": { $exists: true } });
                    if (paymentTypes.includes('rent')) paymentClauses.push({ "watch_providers.US.rent": { $exists: true } });
@@ -544,33 +548,23 @@ export async function handler(event) {
         
         let searchResults;
 
-        // PRIORITY #1.5: Cast/Person Search
-        // If personList has items and no query text, search by cast
-        if (personList.length > 0 && (!query || query.length < 2)) {
-             let castResults = [];
+        // PRIORITY #1.5: Cast/Person Search (direct filter, never vector search)
+        // Fetch every match, then sort by popularity and paginate so the page is accurate.
+        if (isDirectPersonSearch) {
+             const castResults = [];
              for(const c of collections) {
                  if (c.type === 'boardgame') continue; // Board games don't have cast
                  
                  try {
-                     const coll = getCollection(c);
-               // Enforce AND semantics across multiple selected people
-               // - single person: exact cast match check
-               // - multiple people: require all selected people in cast array
-               const query = personList.length === 1
-                 ? { cast: personList[0] }
-                 : { cast: { $all: personList } };
-                     const docs = await coll.find(query, { limit }).toArray();
+                     const docs = await getCollection(c).find(finalFilter).toArray();
                      docs.forEach(d => { d.content_type = c.type; castResults.push(d); });
                  } catch(e){
                      console.error(`Error searching cast for ${c.name}:`, e);
                  }
              }
              
-             if (castResults.length > 0) {
-                 // Sort by popularity
-                 castResults.sort((a, b) => (Number(b.popularity) || 0) - (Number(a.popularity) || 0));
-               return { statusCode: 200, body: JSON.stringify(buildPagedResponse(castResults, castResults.length)) };
-             }
+             castResults.sort((a, b) => (Number(b.popularity) || 0) - (Number(a.popularity) || 0));
+             return { statusCode: 200, body: JSON.stringify(buildPagedResponse(castResults, castResults.length)) };
         }
 
           let totalResults = 0;
