@@ -322,6 +322,8 @@ export async function handler(event) {
         const paymentTypes = getList(qs.payment_types || "stream");
         const providerPopularityFloor = Math.max(0, parseFloat(qs.provider_min_popularity || "50") || 50);
         const limit = fetchLimit;
+        // Similarity searches have no natural end, so fetch a fixed window instead of one row past the page.
+        const vectorLimit = Math.max(limit, 100);
 
         // NEW: Type filter (movie, person, genre)
         const typeFilter = qs.type_filter; // Expected values: "movie", "person", "genre"
@@ -396,7 +398,7 @@ export async function handler(event) {
                                  const collection = db.collection(collInfo.name);
                                  const items = await collection.find(
                                      {},
-                                     { sort: { $vector: sourceVector }, limit: limit, includeSimilarity: true, projection: { $vector: 0 } }
+                                     { sort: { $vector: sourceVector }, limit: vectorLimit, includeSimilarity: true, projection: { $vector: 0 } }
                                  ).toArray();
                                  
                                  items.forEach(item => {
@@ -617,7 +619,7 @@ export async function handler(event) {
                      if (Array.isArray(sourceVector)) {
                          // Continue to vector search instead of returning exact match only
                          const queryEmbedding = sourceVector;
-                         const vectorResults = await queryCollections(db, collections, finalFilter, { sort: { $vector: queryEmbedding }, limit, includeSimilarity: true }, limit);
+                         const vectorResults = await queryCollections(db, collections, finalFilter, { sort: { $vector: queryEmbedding }, limit: vectorLimit, includeSimilarity: true }, limit);
                          
                          const merged = [...vectorResults.map(r => ({...r, sortScore: r.$similarity || 0}))];
                          const unique = [];
@@ -638,7 +640,7 @@ export async function handler(event) {
              }
 
              const queryEmbedding = await generateEmbedding(query);
-             const vectorResults = await queryCollections(db, collections, finalFilter, { sort: { $vector: queryEmbedding }, limit, includeSimilarity: true }, limit);
+             const vectorResults = await queryCollections(db, collections, finalFilter, { sort: { $vector: queryEmbedding }, limit: vectorLimit, includeSimilarity: true }, limit);
              console.log("Did a vector search with embedding for query:", query);
 
              const merged = [...vectorResults.map(r => ({...r, sortScore: r.$similarity || 0}))];

@@ -773,23 +773,22 @@
     }
 
     .searchBox .settings-btn {
-      position: absolute;
-      top: -8px;
-      left: -8px;
-      height: 20px;
-      width: 20px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       padding: 0;
-      margin: 0;
-      border: none;
+      margin: 0 0 0 8px;
+      height: 26px;
+      width: 28px;
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
       background: transparent;
       box-shadow: none;
-      color: var(--text-muted);
-      font-size: 15px;
+      color: var(--text-main);
+      font-size: 12px;
+      font-weight: 600;
       line-height: 1;
-      z-index: 6;
+      white-space: nowrap;
     }
 
     .searchBox .settings-btn:hover {
@@ -1833,14 +1832,13 @@
               <button id="theme-toggle-btn" class="theme-toggle-btn" type="button" title="Switch to Dark mode">Light</button>
               <button id="watchlist-btn" class="watchlist-btn" type="button" aria-label="My Lists" title="My Lists">⭐</button>
               <div class="searchCluster">
-                <h2 id="search-label" class="label" style="display: none;"></h2>
                 <div class="searchBox">
                   <div id="chips" class="chips"></div>
                   <div class="searchInputRow">
                     <input id="searchInput" class="inputInline" placeholder="Loading autocomplete..." autocomplete="off" disabled title="Loading autocomplete data..."
                       style="flex: 1;" />
                     <button id="search-submit-btn" class="search-submit-btn" type="button">Search</button>
-                    <button id="settings-btn" class="settings-btn" title="Filters">⚙️</button>
+                    <button id="settings-btn" class="settings-btn" type="button" title="Filters" aria-label="Filters"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5 22 3"></polygon></svg></button>
                   </div>
                 </div>
                 <div id="suggestions" class="results" style="display:none;"></div>

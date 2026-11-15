@@ -980,18 +980,17 @@ function renderChips() {
   chipsContainer.innerHTML = selectedFilters.map(filter => {
     const safeId = String(filter.id).replace(/'/g, "\\'");
     const typeLabelMap = {
-      movie_id: 'title',
-      boardgame_id: 'boardgame',
-      person: 'person',
-      genre: 'genre',
-      keyword: 'keyword'
+      movie_id: 'Title',
+      boardgame_id: 'Board game',
+      person: 'Person',
+      genre: 'Genre',
+      keyword: 'Keyword'
     };
     const displayType = typeLabelMap[filter.type] || filter.type;
     return `
-    <span class="chip">
+    <span class="chip" title="${escapeHtml(displayType)}">
       <span class="chipText">
         <span class="chipName">${escapeHtml(filter.name)}</span>
-        <span class="chipType">${escapeHtml(displayType)}</span>
       </span>
       <button type="button" onclick="removeFilter('${safeId}')" aria-label="Remove">×</button>
     </span>
@@ -1185,16 +1184,7 @@ function updateContentButtons() {
     }
 
     // 3. Update Search Label and Placeholder
-    const searchLabel = document.getElementById('search-label');
     const searchInput = document.getElementById('searchInput');
-
-    if (searchLabel) {
-        if (searchMode.boardgames) {
-            searchLabel.textContent = 'Search for Game/Publisher/Designer';
-        } else {
-            searchLabel.textContent = 'Search for Title/Genre/Person';
-        }
-    }
 
     if (searchInput) {
       syncSearchInputPlaceholder();
@@ -1756,6 +1746,11 @@ function renderPagination(page, totalPages = 1, totalResults = null, hasMore = f
   if (!output) return;
 
   let paginationEl = document.getElementById("pagination");
+  if ((Number(totalPages) || 1) <= 1 && !hasMore && (Number(page) || 1) <= 1) {
+    if (paginationEl) paginationEl.remove();
+    return;
+  }
+
   if (!paginationEl) {
     paginationEl = document.createElement("div");
     paginationEl.id = "pagination";
