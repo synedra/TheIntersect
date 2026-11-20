@@ -120,6 +120,18 @@ def normalize_search_name(value):
     out = re.sub(r"[^a-z0-9\s]", " ", str(value or "").lower())
     return re.sub(r"\s+", " ", out).strip()
 
+def autocomplete_prefixes(search_name):
+    prefixes = set()
+    for end in range(3, min(len(search_name), 16) + 1):
+        prefixes.add(search_name[:end].rstrip())
+    for token in search_name.split()[1:]:
+        for end in range(3, min(len(token), 8) + 1):
+            prefixes.add(token[:end])
+    if len(search_name) < 3:
+        prefixes.add(search_name)
+    return sorted(prefixes)
+
+
 def build_autocomplete_doc(item_type, scope, item_id, name, score, source):
     search_name = normalize_search_name(name)
     if len(search_name) < 2:
@@ -130,6 +142,7 @@ def build_autocomplete_doc(item_type, scope, item_id, name, score, source):
         "type": item_type,
         "name": name,
         "searchName": search_name,
+        "prefixes": autocomplete_prefixes(search_name),
         "score": float(score),
         "source": source,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
@@ -152,7 +165,8 @@ def create_autocomplete_documents(movie_details):
     entries = []
     if title:
         entries.append(("movie", item_id, title, score))
-    for actor in movie_details.get('credits', {}).get('cast', [])[:5]:
+    # Match the cast_details slice so every stored cast member is searchable.
+    for actor in movie_details.get('credits', {}).get('cast', [])[:20]:
         if actor.get('name'):
             entries.append(("person", "", actor['name'], 10))
     for genre in movie_details.get('genres', []):

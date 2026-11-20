@@ -75,7 +75,7 @@ async function collectMediaEntries(collection, mediaType, entriesCollection, sta
     }
 
     const cast = Array.isArray(doc.cast_details) ? doc.cast_details : [];
-    for (const person of cast.slice(0, 12)) {
+    for (const person of cast) {
       const personName = normalizeText(person?.name || "");
       if (!personName) continue;
 

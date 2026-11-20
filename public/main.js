@@ -458,13 +458,14 @@ let debounceTimer;
 const PAGE_SIZE = 20;
 let selectedFilters = []; // Array of {type, id, name}
 let selectedProviders = new Set();
-let searchMode = { stream: true, rentBuy: false, movies: true, tvshows: false, boardgames: false };
+let searchMode = { stream: true, rentBuy: false, movies: true, tvshows: false, boardgames: false, books: false };
 let contentMode = 'movies'; // Always start with movies
 
 const sectionSearchState = {
   movies: { filters: [], query: '', providers: [] },
   tvshows: { filters: [], query: '', providers: [] },
-  boardgames: { filters: [], query: '', providers: [] }
+  boardgames: { filters: [], query: '', providers: [] },
+  books: { filters: [], query: '', providers: [] }
 };
 
 let userHasSelectedContent = false;
@@ -533,7 +534,9 @@ function syncSearchInputPlaceholder() {
     return;
   }
 
-  if (searchMode.boardgames) {
+  if (searchMode.books) {
+    searchInput.placeholder = 'Search Books';
+  } else if (searchMode.boardgames) {
     searchInput.placeholder = 'Search Boardgames';
   } else if (searchMode.tvshows) {
     searchInput.placeholder = 'Search TV Shows';
@@ -543,12 +546,14 @@ function syncSearchInputPlaceholder() {
 }
 
 function getActiveContentLabel() {
+  if (searchMode.books) return "books";
   if (searchMode.boardgames) return "board games";
   if (searchMode.tvshows) return "TV shows";
   return "movies";
 }
 
 function getActiveSectionKey() {
+  if (searchMode.books) return 'books';
   if (searchMode.boardgames) return 'boardgames';
   if (searchMode.tvshows) return 'tvshows';
   return 'movies';
@@ -574,7 +579,7 @@ function restoreSectionState(sectionKey) {
 }
 
 function switchToSection(sectionKey) {
-  if (!['movies', 'tvshows', 'boardgames'].includes(sectionKey)) return;
+  if (!['movies', 'tvshows', 'boardgames', 'books'].includes(sectionKey)) return;
 
   const currentKey = getActiveSectionKey();
   saveCurrentSectionState();
@@ -582,6 +587,7 @@ function switchToSection(sectionKey) {
   searchMode.movies = sectionKey === 'movies';
   searchMode.tvshows = sectionKey === 'tvshows';
   searchMode.boardgames = sectionKey === 'boardgames';
+  searchMode.books = sectionKey === 'books';
 
   restoreSectionState(sectionKey);
   renderChips();
@@ -610,7 +616,7 @@ function updateSearchSummary() {
     parts.push('No filters');
   }
 
-  if (!searchMode.boardgames && selectedProviders.size > 0) {
+  if (!searchMode.boardgames && !searchMode.books && selectedProviders.size > 0) {
     const providers = Array.from(selectedProviders);
     const providerPreview = providers.slice(0, 2).join(', ');
     const providerRemainder = providers.length > 2 ? ` +${providers.length - 2}` : '';
@@ -745,7 +751,7 @@ function getLocalAutocompleteSuggestions(query) {
   const normalized = String(query || '').trim().toLowerCase();
   if (!normalized || normalized.length < AUTOCOMPLETE_MIN_QUERY_LEN) return [];
 
-  const scope = searchMode.boardgames ? 'boardgames' : 'media';
+  const scope = searchMode.books ? 'books' : (searchMode.boardgames ? 'boardgames' : 'media');
   const cacheKey = `${scope}:${normalized}`;
   if (autocompleteCache.has(cacheKey)) return autocompleteCache.get(cacheKey) || [];
 
@@ -780,7 +786,8 @@ function renderAutocompleteSuggestions(matches, suggestionsDiv) {
   suggestionsDiv.innerHTML = matches.map((item, index) => {
     const name = item.name || item.title || '';
     const type = item.type || (searchMode.boardgames ? 'boardgame' : 'movie');
-    const typeLabel = type === 'boardgame' ? '🎲 Game' :
+    const typeLabel = type === 'book' ? '📚 Book' :
+                     type === 'boardgame' ? '🎲 Game' :
                      type === 'person' ? '👤 Person' :
                      type === 'genre' ? '🎭 Genre' :
                      type === 'tv' ? '📺 TV' : '🎬 Movie';
@@ -801,7 +808,7 @@ function renderAutocompleteSuggestions(matches, suggestionsDiv) {
       const id = item.dataset.id;
       const type = item.dataset.type;
 
-      if (type === 'boardgame' || type === 'movie' || type === 'tv') {
+      if (type === 'boardgame' || type === 'movie' || type === 'tv' || type === 'book') {
         if (type === 'boardgame') addFilter('boardgame_id', id, name);
         else addFilter('movie_id', id, name);
       } else if (type === 'person') {
@@ -822,9 +829,11 @@ async function fetchAutocompleteSuggestions(query, signal) {
   const normalized = String(query || '').trim().toLowerCase();
   if (!normalized || normalized.length < AUTOCOMPLETE_MIN_QUERY_LEN) return [];
 
-  const scope = searchMode.boardgames
-    ? 'boardgames'
-    : (searchMode.tvshows ? 'tvshows' : 'movies');
+  const scope = searchMode.books
+    ? 'books'
+    : (searchMode.boardgames
+      ? 'boardgames'
+      : (searchMode.tvshows ? 'tvshows' : 'movies'));
   const cacheKey = `${scope}:${normalized}`;
   if (autocompleteCache.has(cacheKey)) return autocompleteCache.get(cacheKey);
 
@@ -1146,6 +1155,7 @@ if (isMobileViewport()) {
 const btnMovies = document.getElementById("btn-content-movies");
 const btnTVShows = document.getElementById("btn-content-tvshows");
 const btnBoardGames = document.getElementById("btn-content-boardgames");
+const btnBooks = document.getElementById("btn-content-books");
 
 function updateContentButtons() {
     console.log('[updateContentButtons] searchMode:', searchMode);
@@ -1153,6 +1163,7 @@ function updateContentButtons() {
     // 1. Sync Logo
     const logoImg = document.getElementById("logo-img");
     if (logoImg) {
+        logoImg.style.visibility = searchMode.books ? 'hidden' : '';
         if (searchMode.boardgames) {
             logoImg.src = "/BGG.jpg";
             logoImg.alt = "BoardGameGeek";
@@ -1166,21 +1177,25 @@ function updateContentButtons() {
     const buttons = {
         movies: document.getElementById("btn-content-movies"),
         tvshows: document.getElementById("btn-content-tvshows"),
-        boardgames: document.getElementById("btn-content-boardgames")
+        boardgames: document.getElementById("btn-content-boardgames"),
+        books: document.getElementById("btn-content-books")
     };
 
     if (buttons.movies) {
-        buttons.movies.className = (!searchMode.boardgames && searchMode.movies) ? 'button' : 'button secondary';
+        buttons.movies.className = (!searchMode.boardgames && !searchMode.books && searchMode.movies) ? 'button' : 'button secondary';
         // Remove inline styles that might interfere
         buttons.movies.style.background = '';
         buttons.movies.style.borderColor = '';
         buttons.movies.style.color = '';
     }
     if (buttons.tvshows) {
-        buttons.tvshows.className = (!searchMode.boardgames && searchMode.tvshows) ? 'button' : 'button secondary';
+        buttons.tvshows.className = (!searchMode.boardgames && !searchMode.books && searchMode.tvshows) ? 'button' : 'button secondary';
     }
     if (buttons.boardgames) {
         buttons.boardgames.className = searchMode.boardgames ? 'button' : 'button secondary';
+    }
+    if (buttons.books) {
+        buttons.books.className = searchMode.books ? 'button' : 'button secondary';
     }
 
     // 3. Update Search Label and Placeholder
@@ -1197,7 +1212,7 @@ function updateContentButtons() {
     const providersLabel = document.getElementById('providers-label');
 
     if (providersSection && providersLabel) {
-        if (searchMode.boardgames) {
+        if (searchMode.boardgames || searchMode.books) {
             providersSection.style.display = 'none';
             providersLabel.style.display = 'none';
             providersSection.innerHTML = '';
@@ -1250,6 +1265,12 @@ if (btnTVShows) {
 if (btnBoardGames) {
   btnBoardGames.addEventListener('click', () => {
     switchToSection('boardgames');
+  });
+}
+
+if (btnBooks) {
+  btnBooks.addEventListener('click', () => {
+    switchToSection('books');
   });
 }
 
@@ -1554,7 +1575,7 @@ async function astraApi(action, params = {}, requestOptions = {}) {
     }
     
     // Add content_mode for relevant actions
-    if (action === "details" || action === "similar" || action === "similar_boardgames") {
+    if (action === "details" || action === "similar" || action === "similar_boardgames" || action === "similar_books") {
       url.searchParams.set("content_mode", contentMode);
     }
     
@@ -1654,6 +1675,7 @@ function renderGrid(movies) {
   currentMoviesData = movies;
 
   const isBoardGame = searchMode.boardgames;
+  const isBook = searchMode.books;
 
   let filteredMovies = movies;
 
@@ -1666,6 +1688,23 @@ function renderGrid(movies) {
   output.innerHTML = `
     <div class="grid">
       ${filteredMovies.map((m, index) => {
+        if (isBook) {
+          const title = m.title || "Unknown Book";
+          const authorLine = Array.isArray(m.authors) ? m.authors.slice(0, 2).join(', ') : '';
+          const ratingText = m.rating ? ` • ⭐ ${Number(m.rating).toFixed(1)}` : '';
+          return `
+            <div class="card" data-index="${index}" data-content-type="book" data-id="${escapeHtml(String(m.id || m._id))}">
+              ${m.cover_url
+                ? `<img src="${escapeHtml(m.cover_url)}" alt="${escapeHtml(title)}" onerror="this.outerHTML='<div class=&quot;noposter&quot;>No cover</div>';" />`
+                : `<div class="noposter">No cover</div>`
+              }
+              <div class="movieTitle">${escapeHtml(title)}</div>
+              <div class="meta">
+                ${authorLine ? `${escapeHtml(authorLine)}<br>` : ''}${m.release_year ? `${m.release_year}` : ''}${ratingText}
+              </div>
+            </div>
+          `;
+        }
         if (isBoardGame) {
           const title = m.name0 || m.name || m.title || "Unknown Game";
           const year = m.year ? Math.floor(m.year) : 0;
@@ -1728,7 +1767,9 @@ function renderGrid(movies) {
       const index = parseInt(card.getAttribute('data-index'));
       const item = currentMoviesData[index];
       if (item) {
-        if (searchMode.boardgames) {
+        if (searchMode.books) {
+          openMovieModal(item.id || item._id, 'book');
+        } else if (searchMode.boardgames) {
           const itemId = item.bggid || item.bgg_id;
           openMovieModal(itemId, 'boardgame');
         } else {
@@ -1985,7 +2026,7 @@ async function loadPage(page = 1) {
     }
 
     // Movies OR TV shows (single-section mode)
-    const contentTypesValue = searchMode.tvshows ? 'tvshows' : 'movies';
+    const contentTypesValue = searchMode.books ? 'books' : (searchMode.tvshows ? 'tvshows' : 'movies');
     
     // Check if there's a specific movie/show ID filter (from autocomplete)
     const movieIdFilter = selectedFilters.find(f => f.type === 'movie_id');
@@ -2078,7 +2119,9 @@ async function openMovieModal(movieId, contentType = 'movie') {
   try {
     console.log('[OpenModal] Fetching details for:', movieId, 'contentType:', contentType);
     let data;
-    if (contentType === 'boardgame') {
+    if (contentType === 'book') {
+      data = await astraApi("details", { id: movieId, type: 'book' });
+    } else if (contentType === 'boardgame') {
       data = await astraApi("details", { id: movieId, type: 'boardgame' });
     } else if (contentType === 'tvshow' || contentType === 'tv') {
       data = await astraApi("details", { id: movieId, type: 'tvshow' });
@@ -2100,6 +2143,11 @@ async function openMovieModal(movieId, contentType = 'movie') {
     if (!movie || Object.keys(movie).length === 0) {
       modalTitle.textContent = "Content not found";
       modalBody.innerHTML = "<div style='padding:16px;'>Content not found.</div>";
+      return;
+    }
+
+    if (contentType === 'book') {
+      renderBookModal(movie, movieId);
       return;
     }
 
@@ -3065,6 +3113,95 @@ async function loadSimilarMovies(movieId, isTVShow = false) {
   } catch (e) {
     console.error(e);
     container.innerHTML = `<div class='subtle'>Error loading similar titles.</div>`;
+  }
+}
+
+function addAuthorFilter(author) {
+  const name = String(author || '').replace(/\s+/g, ' ').trim();
+  if (!name) return;
+  closeModal();
+  selectedFilters = selectedFilters.filter(f => f.type !== 'movie_id');
+  if (!selectedFilters.some(f => f.type === 'person' && f.name === name)) {
+    selectedFilters.push({ type: 'person', id: name, name });
+  }
+  renderChips();
+  loadPage(1);
+}
+
+function renderBookModal(book, bookId) {
+  modalTitle.textContent = book.title || 'Unknown Book';
+  const subtitleParts = [
+    book.release_year || '',
+    book.rating ? `⭐ ${Number(book.rating).toFixed(2)} (${Number(book.ratings_count || 0).toLocaleString()} ratings)` : '',
+    book.pages ? `${book.pages} pages` : ''
+  ].filter(Boolean).join(' • ');
+  modalSubtitle.textContent = subtitleParts;
+
+  const pills = (items, cls, label = '') => (Array.isArray(items) ? items : [])
+    .map(v => `<span class="pill ${cls}" title="${label}" style="cursor:pointer;">${escapeHtml(v)}</span>`).join(' ');
+  const authors = pills(book.authors, 'author-pill', 'Author');
+  const genres = pills((book.genres || []).slice(0, 8), 'category-pill', 'Genre');
+  const tags = pills((book.tags || []).slice(0, 12), 'tag-pill', 'Keyword');
+  const series = book.series
+    ? `<span class="pill series-pill" title="Series" style="cursor:pointer;">${escapeHtml(book.series)}</span>${book.series_position ? ` #${escapeHtml(String(book.series_position))}` : ''}`
+    : '';
+  const moods = pills((book.moods || []).slice(0, 8), 'mood-pill', 'Mood');
+  const warnings = (Array.isArray(book.content_warnings) ? book.content_warnings : [])
+    .slice(0, 10).map(v => `<span class="pill" title="Content warning">${escapeHtml(v)}</span>`).join(' ');
+
+  modalBody.innerHTML = `
+    <div style="display:flex; gap:16px; flex-wrap:wrap;">
+      ${book.cover_url ? `<img src="${escapeHtml(book.cover_url)}" alt="${escapeHtml(book.title || '')}" style="width:180px; border-radius:8px; align-self:flex-start;" />` : ''}
+      <div style="flex:1; min-width:240px;">
+        ${book.subtitle ? `<div class="subtle" style="margin-bottom:8px;">${escapeHtml(book.subtitle)}</div>` : ''}
+        ${authors ? `<div style="margin-bottom:8px;"><strong>By</strong> ${authors}</div>` : ''}
+        ${series ? `<div style="margin-bottom:8px;"><strong>Series:</strong> ${series}</div>` : ''}
+        ${book.description ? `<p style="line-height:1.5;">${escapeHtml(book.description)}</p>` : ''}
+        ${genres ? `<div style="margin:8px 0;"><strong>Genres</strong><br>${genres}</div>` : ''}
+        ${moods ? `<div style="margin:8px 0;"><strong>Moods</strong><br>${moods}</div>` : ''}
+        ${tags ? `<div style="margin:8px 0;"><strong>Tags</strong><br>${tags}</div>` : ''}
+        ${warnings ? `<div style="margin:8px 0;"><strong>Content warnings</strong><br>${warnings}</div>` : ''}
+        ${book.publisher || book.language ? `<div class="subtle">${[book.publisher, book.language].filter(Boolean).map(escapeHtml).join(' • ')}</div>` : ''}
+        ${book.hardcover_url ? `<div style="margin-top:8px;"><a href="${escapeHtml(book.hardcover_url)}" target="_blank" rel="noopener noreferrer">View on Hardcover</a></div>` : ''}
+      </div>
+    </div>
+    <div style="margin-top:20px; border-top:2px solid #eee; padding-top:16px;">
+      <h3 style="margin:0 0 10px;">Similar Books</h3>
+      <div id="similar-books-grid" style="display:flex; gap:12px; overflow-x:auto; padding-bottom:8px;"></div>
+    </div>
+  `;
+
+  modalBody.querySelectorAll('.author-pill').forEach(el => el.addEventListener('click', () => addAuthorFilter(el.textContent)));
+  modalBody.querySelectorAll('.category-pill').forEach(el => el.addEventListener('click', () => addGenreFilter(el.textContent)));
+  modalBody.querySelectorAll('.tag-pill, .mood-pill, .series-pill').forEach(el => el.addEventListener('click', () => addKeywordFilter(el.textContent)));
+
+  loadSimilarBooks(bookId);
+}
+
+async function loadSimilarBooks(bookId) {
+  const container = document.getElementById('similar-books-grid');
+  if (!container) return;
+  try {
+    const data = await astraApi('similar_books', { id: bookId, limit: 10 });
+    const results = data?.results || [];
+    if (results.length === 0) {
+      container.innerHTML = "<div class='subtle'>No similar books found.</div>";
+      return;
+    }
+    container.innerHTML = results.map(m => `
+      <div class="card similar-card" data-book-id="${escapeHtml(String(m.id || m._id))}" style="min-width:100px; width:100px; cursor:pointer; border:none; box-shadow:none; background:transparent;">
+        ${m.cover_url
+          ? `<img src="${escapeHtml(m.cover_url)}" alt="${escapeHtml(m.title || '')}" style="width:100%; border-radius:8px; aspect-ratio:2/3; object-fit:cover; background:#eee;" />`
+          : `<div class="noposter" style="aspect-ratio:2/3;">No cover</div>`}
+        <div style="font-size:11px; margin-top:4px; line-height:1.2; max-height:2.4em; overflow:hidden; text-align:center;">${escapeHtml(m.title || '')}</div>
+      </div>
+    `).join('');
+    container.querySelectorAll('.similar-card').forEach(card => {
+      card.addEventListener('click', () => openMovieModal(card.getAttribute('data-book-id'), 'book'));
+    });
+  } catch (e) {
+    console.error(e);
+    container.innerHTML = "<div class='subtle'>Error loading similar books.</div>";
   }
 }
 

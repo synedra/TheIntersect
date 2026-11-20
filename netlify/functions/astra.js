@@ -91,18 +91,21 @@ function getAutocompleteLexicalFlags(name, query) {
 function getAutocompleteTypeScope(scope) {
   const normalizedScope = String(scope || '').toLowerCase();
   if (normalizedScope === 'movies' || normalizedScope === 'movie') {
-    return { storageScopes: ['movies', 'media'], allowedTypes: new Set(['movie']) };
+    return { storageScopes: ['movies', 'media'], allowedTypes: new Set(['movie', 'person', 'genre']) };
   }
   if (normalizedScope === 'tvshows' || normalizedScope === 'tvshow' || normalizedScope === 'tv') {
-    return { storageScopes: ['tvshows', 'media'], allowedTypes: new Set(['tv', 'tvshow']) };
+    return { storageScopes: ['tvshows', 'media'], allowedTypes: new Set(['tv', 'tvshow', 'person', 'genre']) };
   }
   if (normalizedScope === 'boardgames' || normalizedScope === 'boardgame') {
     return { storageScopes: ['boardgames'], allowedTypes: new Set(['boardgame']) };
   }
+  if (normalizedScope === 'books' || normalizedScope === 'book') {
+    return { storageScopes: ['books'], allowedTypes: new Set(['book', 'person', 'genre']) };
+  }
   if (normalizedScope === 'all') {
     return { storageScopes: ['all'], allowedTypes: null };
   }
-  return { storageScopes: ['media'], allowedTypes: new Set(['movie', 'tv', 'tvshow']) };
+  return { storageScopes: ['media'], allowedTypes: new Set(['movie', 'tv', 'tvshow', 'person', 'genre']) };
 }
 
 async function generateEmbedding(text) {
@@ -225,6 +228,7 @@ export async function handler(event) {
   if (contentTypes.includes('movies')) collections.push({ name: 'movies2026', type: 'movie' });
   if (contentTypes.includes('tvshows')) collections.push({ name: 'tvshows2026', type: 'tv' });
   if (contentTypes.includes('boardgames')) collections.push({ name: 'bgg_board_games', type: 'boardgame', keyspace: 'boardgames' });
+  if (contentTypes.includes('books')) collections.push({ name: 'books2026', type: 'book' });
   if (collections.length === 0) collections.push({ name: 'movies2026', type: 'movie' });
   
   const moviesCollection = db.collection('movies2026');
@@ -330,7 +334,8 @@ export async function handler(event) {
 
         // Check if we're searching board games
         const isBoardGameSearch = contentTypes.includes('boardgames') && contentTypes.length === 1;
-        const hasProviderFilters = providers.length > 0;
+        const isBookSearch = contentTypes.includes('books') && contentTypes.length === 1;
+        const hasProviderFilters = providers.length > 0 && !isBookSearch;
 
         // Check for "bare genre search" cache hit
         // Conditions: No text query, no specific movie/person/keyword/language/provider filters, but Genres ARE selected.
@@ -362,7 +367,7 @@ export async function handler(event) {
                      let query;
                      if (c.type === 'boardgame' && bggIds.length > 0) {
                        query = { _id: { $in: bggIds } };
-                     } else if ((c.type === 'movie' || c.type === 'tv') && movieIds.length > 0) {
+                     } else if ((c.type === 'movie' || c.type === 'tv' || c.type === 'book') && movieIds.length > 0) {
                        query = { _id: { $in: movieIds } };
                      } else {
                        continue;
@@ -487,6 +492,14 @@ export async function handler(event) {
                     filterConditions.push({ $or: mechanicConditions });
                 }
             });
+        } else if (isBookSearch) {
+            // Books: people are authors; genres and keywords (tags + moods) are string arrays; a keyword also matches a series name.
+            personList.forEach(p => filterConditions.push({ authors: p }));
+            genreList.forEach(g => filterConditions.push({ genres: g }));
+            keywordList.forEach(k => {
+              const variants = getTextVariants(k);
+              if (variants.length > 0) filterConditions.push({ $or: [{ keywords: { $in: variants } }, { series: { $in: variants } }] });
+            });
         } else {
             // Movie/TV filtering (existing logic)
             personList.forEach(p => filterConditions.push({ cast: p }));
@@ -503,10 +516,7 @@ export async function handler(event) {
             });
           });
             
-              if (!isBareGenre && !isDirectPersonSearch && (personList.length === 1 || genreList.length === 1 || keywordList.length === 1)) {
-                 filterConditions.push({ vote_average: { $gt: 7 } });
-            }
-            
+
             if (languages.length > 0) filterConditions.push({ original_language: { $in: languages } });
 
             if (providers.length > 0) {
@@ -584,7 +594,7 @@ export async function handler(event) {
                  try {
                      const coll = getCollection(c);
                      let field;
-                     if (c.type === 'movie') {
+                     if (c.type === 'movie' || c.type === 'book') {
                          field = 'title_lower';
                      } else {
                          field = 'name_lower';
@@ -857,6 +867,19 @@ export async function handler(event) {
              return { statusCode: 404, body: JSON.stringify({ error: "Board game not found" }) };
          }
          
+         if (itemType === 'book') {
+             try {
+                const item = await getCollection({ name: 'books2026', type: 'book' }).findOne({ _id: itemId.toString() });
+                if (item) {
+                    item.content_type = 'book';
+                    return { statusCode: 200, body: JSON.stringify({ results: [ { ...item, id: item._id } ] }) };
+                }
+             } catch (e) {
+                 console.warn(`Error finding book ${itemId}:`, e);
+             }
+             return { statusCode: 404, body: JSON.stringify({ error: "Book not found" }) };
+         }
+
          // If type is tvshow, prioritize tvshows collection
          if (itemType === 'tvshow' || itemType === 'tv') {
              try {
@@ -938,6 +961,9 @@ export async function handler(event) {
 
               // Sort in memory by boardgamerank ascending (#1 first)
               results.sort((a, b) => (Number(a.boardgamerank) || Number.MAX_SAFE_INTEGER) - (Number(b.boardgamerank) || Number.MAX_SAFE_INTEGER));
+            } else if (collInfo.type === 'book') {
+              // Astra's in-memory sort caps at 10k matched docs, so only the popular head is browsable here.
+              results = await collection.find({ popularity: { $gte: 400 } }, { sort: { popularity: -1 }, limit: fetchLimit, projection: { $vector: 0 } }).toArray();
             } else if (collInfo.type === 'tv') {
               // TV shows: Query without sort to avoid timeout (no index on popularity), then sort in memory
               const tvFilter = {
@@ -1129,21 +1155,30 @@ export async function handler(event) {
           };
 
           // Preferred path: dedicated autocomplete entries collection.
-          if (!autocompleteEntriesUnavailable) {
+          {
           try {
             const scopeFilter = requestedScope === 'all'
               ? { $in: ['all', 'media', 'boardgames'] }
               : { $in: Array.from(new Set([...storageScopes, 'all'])) };
 
-            const entryRows = await autocompleteEntriesCollection.find(
-              {
-                scope: scopeFilter
-              },
-              {
-                limit: Math.max(limit * 80, 800),
-                projection: { $vector: 0 }
+            let entryRows;
+            // Entries are too numerous to scan; match on precomputed name prefixes.
+            const firstToken = query.split(' ')[0];
+            const lookup = async (key) => {
+              const filter = { scope: scopeFilter, prefixes: key };
+              const projection = { $vector: 0, prefixes: 0 };
+              try {
+                return await autocompleteEntriesCollection.find(filter, { limit: 1000, sort: { score: -1 }, projection }).toArray();
+              } catch (_) {
+                // Very common prefixes exceed Astra's 10k in-memory sort cap; fall back to unsorted rows.
+                return autocompleteEntriesCollection.find(filter, { limit: 1000, projection }).toArray();
               }
-            ).toArray();
+            };
+            // A name-start match is most precise; only widen to a word-prefix match when it comes up short.
+            entryRows = await lookup(query.slice(0, 16).trim());
+            if (entryRows.length < limit && firstToken.slice(0, 8) !== query.slice(0, 16).trim()) {
+              entryRows = entryRows.concat(await lookup(firstToken.slice(0, 8)));
+            }
 
             if (entryRows.length > 0) {
               const starts = [];
@@ -1566,6 +1601,32 @@ export async function handler(event) {
         const finalResults = allSimilarResults.slice(0, limit).map(item => ({ ...item, id: item._id }));
 
         return { statusCode: 200, body: JSON.stringify({ results: finalResults }) };
+      }
+
+      case "similar_books": {
+        const bookId = qs.id;
+        const limit = parseInt(qs.limit) || 6;
+        if (!bookId) return { statusCode: 400, body: JSON.stringify({ error: "Missing book ID" }) };
+
+        try {
+          const collection = getCollection({ name: 'books2026', type: 'book' });
+          const source = await collection.findOne({ _id: bookId.toString() }, { projection: { $vector: 1 } });
+          if (!source || !source.$vector) {
+            return { statusCode: 200, body: JSON.stringify({ results: [] }) };
+          }
+          const items = await collection.find(
+            {},
+            { sort: { $vector: source.$vector }, limit: limit + 1, includeSimilarity: true, projection: { $vector: 0 } }
+          ).toArray();
+          const results = items
+            .filter(item => item._id !== bookId.toString())
+            .slice(0, limit)
+            .map(item => ({ ...item, id: item._id, content_type: 'book' }));
+          return { statusCode: 200, body: JSON.stringify({ results }) };
+        } catch (e) {
+          console.error('[Similar Books] Error:', e);
+          return { statusCode: 200, body: JSON.stringify({ results: [] }) };
+        }
       }
 
       case "similar_boardgames": {

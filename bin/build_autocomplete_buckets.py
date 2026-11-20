@@ -74,6 +74,18 @@ def infer_database_id_from_endpoint(endpoint: Optional[str]) -> Optional[str]:
     return None
 
 
+def autocomplete_prefixes(search_name):
+    prefixes = set()
+    for end in range(3, min(len(search_name), 16) + 1):
+        prefixes.add(search_name[:end].rstrip())
+    for token in search_name.split()[1:]:
+        for end in range(3, min(len(token), 8) + 1):
+            prefixes.add(token[:end])
+    if len(search_name) < 3:
+        prefixes.add(search_name)
+    return sorted(prefixes)
+
+
 def build_doc(*, item_type: str, scope: str, item_id: str, name: str, score: float, source: str, boardgamerank: Optional[int] = None, popularity: Optional[float] = None) -> Optional[dict]:
     search_name = normalize_search_name(name)
     if not search_name or len(search_name) < 2:
@@ -88,6 +100,7 @@ def build_doc(*, item_type: str, scope: str, item_id: str, name: str, score: flo
         "type": item_type,
         "name": name,
         "searchName": search_name,
+        "prefixes": autocomplete_prefixes(search_name),
         "score": float(score),
         "source": source,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
@@ -126,7 +139,13 @@ def normalize_genres(value: object) -> List[str]:
 def flush_batch(target_collection, state: BuildState) -> None:
     if not state.batch:
         return
-    target_collection.insert_many(state.batch, ordered=False)
+    try:
+        target_collection.insert_many(state.batch, ordered=False)
+    except Exception as exc:  # noqa: BLE001
+        # With ordered=False the non-duplicate documents are still inserted;
+        # duplicate _ids carry identical content, so they are safe to skip.
+        if "DOCUMENT_ALREADY_EXISTS" not in str(exc):
+            raise
     state.batch.clear()
 
 
@@ -157,13 +176,15 @@ def collect_media_entries(source_collection, media_type: str, target_collection,
                     state.batch.append(row)
 
         cast = doc.get("cast_details") if isinstance(doc.get("cast_details"), list) else []
-        for person in cast[:12]:
+        for person in cast:
             person_name = normalize_text((person or {}).get("name"))
             if not person_name:
                 continue
 
-            person_key = person_name.lower()
-            if person_key in state.seen_persons:
+            # Key on the normalized search name: distinct raw spellings (punctuation,
+            # diacritics) collapse to the same document _id.
+            person_key = normalize_search_name(person_name)
+            if not person_key or person_key in state.seen_persons:
                 continue
             state.seen_persons.add(person_key)
 
@@ -183,8 +204,8 @@ def collect_media_entries(source_collection, media_type: str, target_collection,
                     state.batch.append(row)
 
         for genre in normalize_genres(doc.get("genres")):
-            key = genre.lower()
-            if key in state.seen_genres:
+            key = normalize_search_name(genre)
+            if not key or key in state.seen_genres:
                 continue
             state.seen_genres.add(key)
 
@@ -271,7 +292,11 @@ def main() -> None:
     if not ASTRA_ENDPOINT or not ASTRA_TOKEN:
         raise RuntimeError("Missing ASTRA_DB_API_ENDPOINT or ASTRA_DB_APPLICATION_TOKEN")
 
-    init_cassio()
+    # CassIO is not required for the Data API reads/writes below; don't fail the build on it.
+    try:
+        init_cassio()
+    except Exception as exc:  # noqa: BLE001
+        print(f"cassio init skipped ({exc}); continuing with Data API only.")
 
     client = DataAPIClient(ASTRA_TOKEN)
     media_db = client.get_database(ASTRA_ENDPOINT)
