@@ -108,6 +108,16 @@ function getAutocompleteTypeScope(scope) {
   return { storageScopes: ['media'], allowedTypes: new Set(['movie', 'tv', 'tvshow', 'person', 'genre']) };
 }
 
+// Astra returns stored vectors as DataAPIVector objects; sorting needs a plain number array.
+function toVectorArray(vector) {
+  if (!vector) return null;
+  if (Array.isArray(vector)) return vector;
+  if (typeof vector.asArray === 'function') return vector.asArray();
+  if (Array.isArray(vector._vector)) return vector._vector;
+  if (Array.isArray(vector.data)) return vector.data;
+  return null;
+}
+
 async function generateEmbedding(text) {
   const response = await fetch("https://api.openai.com/v1/embeddings", {
     method: "POST",
@@ -386,14 +396,7 @@ export async function handler(event) {
                      // Get the vector from the first matched movie
                      let sourceVector = results[0].$vector;
                      
-                     // Normalize vector format
-                     if (!Array.isArray(sourceVector)) {
-                         if (sourceVector._vector && Array.isArray(sourceVector._vector)) {
-                             sourceVector = sourceVector._vector;
-                         } else if (sourceVector.data && Array.isArray(sourceVector.data)) {
-                             sourceVector = sourceVector.data;
-                         }
-                     }
+                     sourceVector = toVectorArray(sourceVector);
                      
                      if (Array.isArray(sourceVector)) {
                          // Perform vector similarity search across collections
@@ -679,13 +682,28 @@ export async function handler(event) {
              if (Object.keys(finalFilter).length > 0) {
                // 1. Sort filtered movie/tv results by popularity.
                //    Board games don't have a reliable popularity field here.
-               if (!isBoardGameSearch && !isBareGenre && !hasProviderFilters) {
+               if (!isBoardGameSearch && (isBookSearch || !isBareGenre) && !hasProviderFilters) {
                  searchOptions.sort = { popularity: -1 };
                }
              }
              
-             searchResults = await queryCollections(db, collections, effectiveFilter, searchOptions, limit);
-             
+             // Astra cannot sort more than 10k matches in memory. A broad book filter (huge genre/tag)
+             // is therefore ranked from the popular head of the catalog, which is always under that cap.
+             let bookSortFilter = effectiveFilter;
+             if (isBookSearch && searchOptions.sort && Object.keys(effectiveFilter).length > 0) {
+               const matched = await countCollections(collections, effectiveFilter, 1000);
+               if (matched === 0) {
+                 bookSortFilter = { $and: [effectiveFilter, { popularity: { $gte: 1000 } }] };
+               }
+             }
+
+             searchResults = await queryCollections(db, collections, bookSortFilter, searchOptions, limit);
+
+             if (isBookSearch && searchResults.length === 0 && searchOptions.sort && Object.keys(effectiveFilter).length > 0) {
+               const { sort, ...unsortedOptions } = searchOptions;
+               searchResults = await queryCollections(db, collections, effectiveFilter, unsortedOptions, limit);
+             }
+
              // Sort appropriately
              if (isBoardGameSearch) {
                  searchResults.sort((b, a) => (b.boardgamerank || 0) - (a.boardgamerank || 0));
@@ -1611,12 +1629,13 @@ export async function handler(event) {
         try {
           const collection = getCollection({ name: 'books2026', type: 'book' });
           const source = await collection.findOne({ _id: bookId.toString() }, { projection: { $vector: 1 } });
-          if (!source || !source.$vector) {
+          const sourceVectorArray = toVectorArray(source?.$vector);
+          if (!sourceVectorArray) {
             return { statusCode: 200, body: JSON.stringify({ results: [] }) };
           }
           const items = await collection.find(
             {},
-            { sort: { $vector: source.$vector }, limit: limit + 1, includeSimilarity: true, projection: { $vector: 0 } }
+            { sort: { $vector: sourceVectorArray }, limit: limit + 1, includeSimilarity: true, projection: { $vector: 0 } }
           ).toArray();
           const results = items
             .filter(item => item._id !== bookId.toString())

@@ -544,9 +544,110 @@ async function searchAllDatasets(question, queryEmbedding, constraintEmbeddings 
   );
 }
 
-function buildContextText(sources) {
-  if (!sources.length) return "No matching records found.";
-  return sources.map((source, index) => {
+async function extractEntities(question, history) {
+  const messages = [
+    {
+      role: "system",
+      content: [
+        "Extract entities from the user's latest question, using the conversation to resolve follow-ups and pronouns.",
+        'Return JSON only: {"titles":[{"title":"exact movie or TV title","character":"character name or empty"}],"people":["full person names explicitly mentioned"]}.',
+        "Only include titles and people the question or conversation clearly refers to. Use empty arrays when none."
+      ].join(" ")
+    },
+    ...history,
+    { role: "user", content: question }
+  ];
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: OPENAI_CHAT_MODEL,
+        messages,
+        temperature: 0,
+        max_tokens: 200,
+        response_format: { type: "json_object" }
+      })
+    });
+    const data = await response.json();
+    const parsed = safeJsonParse(data?.choices?.[0]?.message?.content || "{}") || {};
+    return {
+      titles: Array.isArray(parsed.titles) ? parsed.titles.filter((t) => t && t.title).slice(0, 3) : [],
+      people: Array.isArray(parsed.people) ? parsed.people.map(normalizeText).filter(Boolean).slice(0, 3) : []
+    };
+  } catch {
+    return { titles: [], people: [] };
+  }
+}
+
+async function findByPerson(collection, person, limit) {
+  const options = { limit, projection: { $vector: 0 } };
+  try {
+    const sorted = await collection.find({ cast: person }, { ...options, sort: { popularity: -1 } }).toArray();
+    if (sorted.length) return sorted;
+  } catch {
+    // Fall through to an unsorted lookup.
+  }
+  return collection.find({ cast: person }, options).toArray();
+}
+
+// Exact (non-vector) lookups for titles and people named in the question.
+async function searchStructured(question, history) {
+  const { titles, people } = await extractEntities(question, history);
+  if (!titles.length && !people.length) return { sources: [], facts: [] };
+
+  const movies = db.collection("movies2026");
+  const tv = db.collection("tvshows2026");
+  const sources = [];
+  const facts = [];
+  const peopleToFind = new Set(people);
+
+  for (const { title, character } of titles) {
+    const lower = normalizeText(title).toLowerCase();
+    // eslint-disable-next-line no-await-in-loop
+    const [movieHits, tvHits] = await Promise.all([
+      movies.find({ title_lower: lower }, { limit: 3, projection: { $vector: 0 } }).toArray(),
+      tv.find({ name_lower: lower }, { limit: 3, projection: { $vector: 0 } }).toArray()
+    ]);
+    const hits = [...movieHits.map((doc) => ({ type: "movie", doc })), ...tvHits.map((doc) => ({ type: "tv", doc }))];
+    for (const { type, doc } of hits) {
+      sources.push({ ...asSource(type, doc, { character: normalizeText(character), franchise: "" }), type });
+      if (character) {
+        const match = (doc.cast_details || []).find((c) => overlapRatio(c?.character || "", character) >= 0.5);
+        if (match?.name) {
+          facts.push(`${match.name} played ${match.character} in ${doc.title || doc.name}.`);
+          peopleToFind.add(match.name);
+        }
+      }
+    }
+  }
+
+  for (const person of peopleToFind) {
+    // eslint-disable-next-line no-await-in-loop
+    const [movieHits, tvHits] = await Promise.all([findByPerson(movies, person, 30), findByPerson(tv, person, 15)]);
+    const credits = [
+      ...movieHits.map((doc) => ({ type: "movie", doc })),
+      ...tvHits.map((doc) => ({ type: "tv", doc }))
+    ];
+    if (credits.length) {
+      const list = credits.map(({ type, doc }) => {
+        const year = String(doc.release_date || doc.first_air_date || "").slice(0, 4);
+        const role = (doc.cast_details || []).find((c) => c?.name === person)?.character;
+        return `${doc.title || doc.name}${year ? ` (${year})` : ""}${role ? ` as ${role}` : ""} [${type}]`;
+      });
+      facts.push(`Credits for ${person} in the database: ${list.join("; ")}.`);
+    }
+    credits.slice(0, 12).forEach(({ type, doc }) => sources.push({ ...asSource(type, doc), type }));
+  }
+
+  return { sources, facts };
+}
+
+function buildContextText(sources, facts = []) {
+  if (!sources.length && !facts.length) return "No matching records found.";
+  const factBlock = facts.length ? `Verified facts:\n${facts.join("\n")}\n\nRelated records:\n` : "";
+  return factBlock + sources.map((source, index) => {
     const label = `${index + 1}. [${source.type.toUpperCase()}] ${source.title}`;
     const meta = source.summary ? ` | ${source.summary}` : "";
     return `${label}${meta}`;
@@ -567,6 +668,7 @@ async function generateAnswer({ question, contextText, history }) {
     "Use only the provided context from the app datasets: movies, TV shows, and board games.",
     "If the answer is not in the context, say you don't know based on current data.",
     "Be concise and directly answer the user question.",
+    "Write titles exactly as they appear in the context. Start with a one-sentence answer, then list other items as bullets, one per line, formatted \"- Title (year) as Role\". Never put multiple items on one line.",
     "If useful, mention whether info came from movie, TV, or board game records.",
     "When the context includes multiple dataset types for the same franchise, include a cross-dataset answer instead of focusing on one type only."
   ].join(" ");
@@ -600,7 +702,7 @@ async function generateAnswer({ question, contextText, history }) {
   }
 
   const answer = data?.choices?.[0]?.message?.content;
-  return normalizeText(answer || "I don't know based on current data.");
+  return String(answer || "I don't know based on current data.").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 export async function handler(event) {
@@ -647,8 +749,18 @@ export async function handler(event) {
     }
 
     const constraintEmbeddings = await buildConstraintEmbeddings(question);
-    const sources = await searchAllDatasets(question, queryEmbedding, constraintEmbeddings, CANDIDATE_LIMIT_PER_DATASET);
-    const contextText = buildContextText(sources);
+    const [vectorSources, structured] = await Promise.all([
+      searchAllDatasets(question, queryEmbedding, constraintEmbeddings, CANDIDATE_LIMIT_PER_DATASET),
+      searchStructured(question, history)
+    ]);
+    const seen = new Set();
+    const sources = [...structured.sources, ...vectorSources].filter((s) => {
+      const key = sourceKey(s);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, FINAL_SOURCE_LIMIT + 12);
+    const contextText = buildContextText(sources, structured.facts);
     const answer = await generateAnswer({ question, contextText, history });
 
     return {

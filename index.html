@@ -841,8 +841,8 @@
       border-right: 1px solid rgba(255, 255, 255, 0.16);
       border-radius: 0;
       min-width: 0;
-      padding-left: 18px;
-      padding-right: 18px;
+      padding-left: 6px;
+      padding-right: 6px;
       box-shadow: none;
       background: transparent;
       color: var(--text-muted);
@@ -1427,11 +1427,23 @@
       border: 1px solid rgba(255, 255, 255, 0.14);
     }
 
+    .aiChatBubble.assistant {
+      white-space: normal;
+    }
+
+    .aiChatList {
+      margin: 6px 0 0;
+      padding-left: 20px;
+    }
+
+    .aiChatList li {
+      margin: 3px 0;
+    }
+
     .aiChatSources {
       margin-top: 8px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
+      display: block;
+      line-height: 1.9;
     }
 
     .aiChatSource {
@@ -1439,8 +1451,10 @@
       -webkit-appearance: none;
       cursor: pointer;
       text-align: left;
-      font-size: 11px;
-      padding: 2px 8px;
+      display: inline;
+      margin: 0 1px;
+      font: inherit;
+      padding: 0 8px;
       border-radius: 999px;
       border: 1px solid rgba(96, 165, 250, 0.45);
       color: #bfdbfe;
@@ -1589,6 +1603,27 @@
       background: rgba(255, 255, 255, 0.74);
       border-color: rgba(16, 24, 40, 0.12);
       color: #101828;
+    }
+
+    html[data-theme='light'] .aiChatSource {
+      color: #1e3a8a;
+      background: rgba(219, 234, 254, 0.9);
+      border-color: rgba(37, 99, 235, 0.5);
+    }
+
+    html[data-theme='light'] .aiChatSource:hover {
+      background: rgba(191, 219, 254, 1);
+      border-color: rgba(37, 99, 235, 0.8);
+    }
+
+    html[data-theme='light'] .aiChatInput {
+      color: #101828;
+      background: #fff;
+      border-color: rgba(16, 24, 40, 0.25);
+    }
+
+    html[data-theme='light'] .aiChatInput::placeholder {
+      color: #667085;
     }
 
     html[data-theme='light'] .modalOverlay {

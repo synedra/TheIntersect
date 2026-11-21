@@ -3150,7 +3150,8 @@ function renderBookModal(book, bookId) {
     .slice(0, 10).map(v => `<span class="pill" title="Content warning">${escapeHtml(v)}</span>`).join(' ');
 
   modalBody.innerHTML = `
-    <div style="display:flex; gap:16px; flex-wrap:wrap;">
+    <div style="grid-column:1 / -1; min-width:0;">
+    <div style="display:flex; gap:24px; flex-wrap:wrap;">
       ${book.cover_url ? `<img src="${escapeHtml(book.cover_url)}" alt="${escapeHtml(book.title || '')}" style="width:180px; border-radius:8px; align-self:flex-start;" />` : ''}
       <div style="flex:1; min-width:240px;">
         ${book.subtitle ? `<div class="subtle" style="margin-bottom:8px;">${escapeHtml(book.subtitle)}</div>` : ''}
@@ -3168,6 +3169,7 @@ function renderBookModal(book, bookId) {
     <div style="margin-top:20px; border-top:2px solid #eee; padding-top:16px;">
       <h3 style="margin:0 0 10px;">Similar Books</h3>
       <div id="similar-books-grid" style="display:flex; gap:12px; overflow-x:auto; padding-bottom:8px;"></div>
+    </div>
     </div>
   `;
 
@@ -3355,24 +3357,72 @@ function initGenAIChat() {
   const appendMessage = (role, content, sources = []) => {
     const bubble = document.createElement('div');
     bubble.className = `aiChatBubble ${role}`;
-    bubble.textContent = content;
 
-    if (role === 'assistant' && Array.isArray(sources) && sources.length > 0) {
-      const sourceWrap = document.createElement('div');
-      sourceWrap.className = 'aiChatSources';
+    const linkable = role === 'assistant' && Array.isArray(sources)
+      ? sources.filter((s) => s && s.title && String(s.title).length > 2)
+        .sort((x, y) => String(y.title).length - String(x.title).length)
+      : [];
 
-      sources.slice(0, 6).forEach((source) => {
-        const badge = document.createElement('button');
-        badge.type = 'button';
-        badge.className = 'aiChatSource';
-        const label = `${source.type || 'item'}: ${source.title || source.id || 'unknown'}`;
-        badge.textContent = label;
-        badge.title = 'Open details';
-        badge.addEventListener('click', () => openSourceItem(source));
-        sourceWrap.appendChild(badge);
+    const byTitle = new Map();
+    linkable.forEach((s) => {
+      const key = String(s.title).toLowerCase();
+      if (!byTitle.has(key)) byTitle.set(key, s);
+    });
+    const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = linkable.length
+      ? new RegExp(`(${linkable.map((s) => escapeRe(String(s.title))).join('|')})`, 'gi')
+      : null;
+
+    // Titles are pills; the same words used as a role ("as Steve", "Robert Oppenheimer", "Scarecrow in ...") stay text.
+    const appendInline = (parent, text) => {
+      if (!pattern) {
+        parent.appendChild(document.createTextNode(text));
+        return;
+      }
+      const parts = text.split(pattern);
+      let before = '';
+      parts.forEach((part, i) => {
+        const source = i % 2 === 1 ? byTitle.get(part.toLowerCase()) : null;
+        const next = parts[i + 1] || '';
+        const isRole = source && (/\bas\s$/i.test(before) || /[A-Z][\w.'-]*\s$/.test(before) || /^\s+in\s/i.test(next));
+        if (!source || isRole) {
+          parent.appendChild(document.createTextNode(part));
+        } else {
+          const badge = document.createElement('button');
+          badge.type = 'button';
+          badge.className = 'aiChatSource';
+          badge.textContent = part;
+          badge.title = source.type ? `Open ${source.type} details` : 'Open details';
+          badge.addEventListener('click', () => openSourceItem(source));
+          parent.appendChild(badge);
+        }
+        before += part;
       });
+    };
 
-      bubble.appendChild(sourceWrap);
+    if (role !== 'assistant') {
+      bubble.textContent = content;
+    } else {
+      // Models sometimes flatten bullets onto one line; split " - Item" runs back into lines.
+      const lines = String(content).replace(/\s+-\s+(?=[A-Z0-9])/g, '\n- ').split('\n').map((l) => l.trim()).filter(Boolean);
+      let list = null;
+      lines.forEach((line) => {
+        if (line.startsWith('- ')) {
+          if (!list) {
+            list = document.createElement('ul');
+            list.className = 'aiChatList';
+            bubble.appendChild(list);
+          }
+          const li = document.createElement('li');
+          appendInline(li, line.slice(2));
+          list.appendChild(li);
+        } else {
+          list = null;
+          const p = document.createElement('div');
+          appendInline(p, line);
+          bubble.appendChild(p);
+        }
+      });
     }
 
     messagesEl.appendChild(bubble);
